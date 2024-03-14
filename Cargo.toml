@@ -1,0 +1,17 @@
+[workspace]
+members = ["packages/proc-macros", "packages/proc-traits"]
+exclude = ["examples/normal"]
+
+[package]
+name = "ads1293-demo"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ bitfield = "0.14.0"
+embedded-hal = "1.0.0"
+enum_variant_type = "0.3.1"
+#onlyerror = "0.1.4"
+# thiserror = "1.0.57"
+log = { version = "0.4.21", features = [] }
+#strum = { version = "0.26", features = ["derive"] }
