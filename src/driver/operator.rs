@@ -29,7 +29,26 @@ impl<SPI: SpiDevice> ReadFromRegister<Address, u8, SPI::Error> for Operator<SPI>
     fn read(&mut self, address: Address) -> Result<u8, ReadError<SPI::Error>> {
         let command = address | (1u8 << 7);
         let mut buffer = [command, 0xff];
-        self.spi.transaction(&mut [Operation::TransferInPlace(&mut buffer)]).map_err(ReadError::SpiTransferError)?;
+        self.spi
+            .transaction(&mut [Operation::TransferInPlace(&mut buffer)])
+            .map_err(ReadError::SpiTransferError)?;
         Ok(buffer[1])
+    }
+}
+
+impl<SPI: SpiDevice> Operator<SPI> {
+    pub fn stream<'a>(
+        &mut self,
+        address: Address,
+        mut buffer: &'a mut [u8],
+    ) -> Result<&'a mut [u8], ReadError<SPI::Error>> {
+        let command = address | (1u8 << 7);
+        buffer[0] = command;
+
+        self.spi
+            .transaction(&mut [Operation::TransferInPlace(&mut buffer)])
+            .map_err(ReadError::SpiTransferError)?;
+
+        Ok(&mut buffer[1..])
     }
 }
