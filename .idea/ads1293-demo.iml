@@ -6,6 +6,8 @@
       <sourceFolder url="file://$MODULE_DIR$/packages/proc-macros/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/packages/proc-traits/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/examples/normal/src" isTestSource="false" />
+      <excludeFolder url="file://$MODULE_DIR$/examples/normal/target" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
     </content>
     <orderEntry type="inheritedJdk" />
