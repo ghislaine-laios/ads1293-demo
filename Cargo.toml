@@ -1,5 +1,5 @@
 [workspace]
-members = ["packages/proc-macros", "packages/proc-traits"]
+members = [ "examples/normal-server","packages/proc-macros", "packages/proc-traits"]
 exclude = ["examples/normal"]
 
 [package]
