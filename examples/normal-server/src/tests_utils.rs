@@ -1,5 +1,7 @@
 use std::sync::Once;
 
+use async_std::net::UdpSocket;
+
 use crate::settings::Settings;
 
 static INIT: Once = Once::new();

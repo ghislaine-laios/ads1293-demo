@@ -191,3 +191,42 @@ pub(super) mod handlers {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use crate::{
+        actors::service_broadcaster::{
+            interval_handlers::ServiceBroadcast,
+            test_utils::{log_socket_service_broadcast, setup_broadcaster_from_settings},
+        },
+        tests_utils::{settings, setup_logger},
+    };
+
+    use super::ServiceBroadcastManager;
+
+    #[ignore]
+    #[actix_rt::test]
+    async fn it_works() {
+        setup_logger();
+        let settings = settings();
+        let broadcaster = setup_broadcaster_from_settings(settings.clone()).await;
+        let manager = ServiceBroadcastManager::new(broadcaster);
+        let (launched_manager, manager_join_handle) = manager.launch();
+
+        let log_socket_handle =
+            actix_rt::spawn(
+                async move { log_socket_service_broadcast(settings.broadcast.port).await },
+            );
+
+        tokio::time::sleep(Duration::from_millis(3000)).await;
+        launched_manager.register_connection().await.unwrap();
+        launched_manager.register_connection().await.unwrap();
+        tokio::time::sleep(Duration::from_millis(3000)).await;
+        launched_manager.unregister_connection().await.unwrap();
+        launched_manager.unregister_connection().await.unwrap();
+
+        log_socket_handle.await.unwrap();
+    }
+}

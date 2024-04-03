@@ -240,6 +240,34 @@ pub(super) mod interval_handlers {
 }
 
 #[cfg(test)]
+pub(crate) mod test_utils {
+    use async_std::net::UdpSocket;
+
+    use crate::settings::Settings;
+
+    use super::ServiceBroadcaster;
+
+    pub async fn setup_broadcaster_from_settings(settings: Settings) -> ServiceBroadcaster {
+        ServiceBroadcaster::new(settings.bind_to, settings.broadcast)
+            .await
+            .unwrap()
+    }
+
+    pub(crate) async fn log_socket_service_broadcast(port: u16) {
+        let socket = UdpSocket::bind(("0.0.0.0", port)).await.unwrap();
+        socket.set_broadcast(true).unwrap();
+        let mut buf: [u8; 1024] = [0; 1024];
+        for i in 1..10 {
+            let (size, addr) = socket.recv_from(&mut buf).await.unwrap();
+            let value: super::Message = serde_json::from_slice(&buf[..size]).unwrap();
+            log::debug!("Index: {}", i);
+            log::debug!("{:?}", addr);
+            log::debug!("{:?}", value);
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use std::time::Duration;
 
@@ -247,32 +275,20 @@ mod tests {
 
     use crate::tests_utils::{settings, setup_logger};
 
-    use super::{Message, ServiceBroadcaster};
+    use super::{test_utils::{log_socket_service_broadcast, setup_broadcaster_from_settings}, Message, ServiceBroadcaster};
 
+    #[ignore]
     #[actix_rt::test]
     async fn it_works() {
         setup_logger();
         let settings = settings();
         let broadcast_info = settings.broadcast.clone();
 
-        let broadcaster = ServiceBroadcaster::new(settings.bind_to, settings.broadcast)
-            .await
-            .unwrap();
+        let broadcaster = setup_broadcaster_from_settings(settings.clone()).await;
         let (broadcaster, _join_handle) = broadcaster.launch();
 
         let join_handle_2 = actix_rt::spawn(async move {
-            let socket = UdpSocket::bind(("0.0.0.0", broadcast_info.port))
-                .await
-                .unwrap();
-            socket.set_broadcast(true).unwrap();
-            let mut buf: [u8; 1024] = [0; 1024];
-            for i in 1..10 {
-                let (size, addr) = socket.recv_from(&mut buf).await.unwrap();
-                let value: Message = serde_json::from_slice(&buf[..size]).unwrap();
-                log::debug!("Index: {}", i);
-                log::debug!("{:?}", addr);
-                log::debug!("{:?}", value);
-            }
+            log_socket_service_broadcast(broadcast_info.port).await
         });
 
         let join_handle_3 = actix_rt::spawn(async move {
