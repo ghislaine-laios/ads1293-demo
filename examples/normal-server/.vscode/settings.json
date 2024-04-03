@@ -1,6 +1,7 @@
 {
     "cSpell.words": [
         "actix",
+        "Deque",
         "oneshot",
         "rtype",
         "thiserror"

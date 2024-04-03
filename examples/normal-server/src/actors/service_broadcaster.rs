@@ -1,13 +1,16 @@
-use crate::settings::{self, BroadcastInfo};
+use self::{actions::Action, interval_handlers::ServiceBroadcast};
+use crate::{
+    actors::Handler,
+    settings::{self, BroadcastInfo},
+};
 use anyhow::Context;
 use async_std::net::UdpSocket;
 use serde::{Deserialize, Serialize};
 use tokio::select;
 
-use self::{actions::Action, handlers::Handler, interval_handlers::ServiceBroadcast};
-
 const SERVICE_NAME: &'static str = "ADS1293-DEMO-NORMAL-SERVICE";
 
+#[derive(Debug)]
 pub enum Status {
     Activated,
     Freezed,
@@ -19,10 +22,12 @@ pub struct Message {
     pub bind_to: settings::BindTo,
 }
 
+#[derive(Debug)]
 pub struct ServiceBroadcaster {
     status: Status,
     socket: UdpSocket,
     broadcast_info: BroadcastInfo,
+    #[allow(dead_code)]
     message: Message,
     raw_message: Vec<u8>,
     service_broadcast: Option<interval_handlers::ServiceBroadcast>,
@@ -54,14 +59,19 @@ impl ServiceBroadcaster {
         })
     }
 
-    pub fn launch(self) -> LaunchedServiceBroadcaster {
+    pub fn launch(
+        self,
+    ) -> (
+        LaunchedServiceBroadcaster,
+        tokio::task::JoinHandle<Result<(), ProcessActionError>>,
+    ) {
         use tokio::sync::mpsc;
 
         let (tx, rx) = mpsc::channel::<Action>(16);
 
         let join_handle = actix_rt::spawn(async move { self.task(rx).await });
 
-        LaunchedServiceBroadcaster { tx, join_handle }
+        (LaunchedServiceBroadcaster { tx }, join_handle)
     }
 
     async fn task(
@@ -122,6 +132,8 @@ impl ServiceBroadcaster {
     ) -> Result<(), ProcessActionError> {
         use ProcessActionError as Error;
 
+        log::debug!("{:?}", &action);
+
         let Some(action) = action else {
             return Err(Error::None);
         };
@@ -139,34 +151,39 @@ impl ServiceBroadcaster {
     }
 }
 
+#[derive(Clone)]
 pub struct LaunchedServiceBroadcaster {
     pub tx: tokio::sync::mpsc::Sender<actions::Action>,
-    pub join_handle: tokio::task::JoinHandle<Result<(), ProcessActionError>>,
 }
 
-impl LaunchedServiceBroadcaster {}
+impl LaunchedServiceBroadcaster {
+    pub async fn set_status(&self, status: Status) -> anyhow::Result<()> {
+        self.tx
+            .send(actions::Action::SetStatus(actions::SetStatus(status)))
+            .await?;
+
+        Ok(())
+    }
+}
 
 pub mod actions {
+    #[derive(Debug)]
     pub enum Action {
         SetStatus(SetStatus),
         Broadcast(Broadcast),
     }
 
+    #[derive(Debug)]
     pub struct SetStatus(pub super::Status);
 
+    #[derive(Debug)]
     pub struct Broadcast;
 }
 
 pub mod handlers {
-    use super::{actions, ServiceBroadcaster};
+    use crate::actors::Handler;
 
-    pub trait Handler<Action> {
-        type Output;
-        fn handle(
-            &mut self,
-            action: Action,
-        ) -> impl std::future::Future<Output = Self::Output> + Send;
-    }
+    use super::{actions, ServiceBroadcaster, Status};
 
     impl Handler<actions::SetStatus> for ServiceBroadcaster {
         type Output = ();
@@ -179,6 +196,11 @@ pub mod handlers {
         type Output = anyhow::Result<()>;
 
         async fn handle(&mut self, _action: actions::Broadcast) -> anyhow::Result<()> {
+            if !matches!(self.status, Status::Activated) {
+                log::debug!("{:?}", self.status);
+                return Ok(());
+            }
+
             self.socket
                 .send_to(
                     &self.raw_message,
@@ -195,6 +217,7 @@ pub(super) mod interval_handlers {
 
     use super::actions::{Action, Broadcast};
 
+    #[derive(Debug)]
     pub struct ServiceBroadcast(tokio::time::Interval, tokio::time::Instant);
 
     impl ServiceBroadcast {
@@ -218,11 +241,13 @@ pub(super) mod interval_handlers {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use async_std::net::UdpSocket;
 
     use crate::tests_utils::{settings, setup_logger};
 
-    use super::{LaunchedServiceBroadcaster, Message, ServiceBroadcaster};
+    use super::{Message, ServiceBroadcaster};
 
     #[actix_rt::test]
     async fn it_works() {
@@ -233,9 +258,7 @@ mod tests {
         let broadcaster = ServiceBroadcaster::new(settings.bind_to, settings.broadcast)
             .await
             .unwrap();
-        let broadcaster = broadcaster.launch();
-
-        let LaunchedServiceBroadcaster { tx, join_handle } = broadcaster;
+        let (broadcaster, _join_handle) = broadcaster.launch();
 
         let join_handle_2 = actix_rt::spawn(async move {
             let socket = UdpSocket::bind(("0.0.0.0", broadcast_info.port))
@@ -252,9 +275,26 @@ mod tests {
             }
         });
 
-        let (r,) = tokio::join!(join_handle);
-        r.unwrap().unwrap();
+        let join_handle_3 = actix_rt::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            broadcaster
+                .set_status(super::Status::Freezed)
+                .await
+                .unwrap();
+            tokio::time::sleep(Duration::from_secs(3)).await;
+            broadcaster
+                .set_status(super::Status::Activated)
+                .await
+                .unwrap();
 
+            // used to prevent dropping the broadcaster since we move it into this closure
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        });
+
+        // let (r,) = tokio::join!(join_handle);
+        // r.unwrap().unwrap();
+
+        join_handle_3.await.unwrap();
         join_handle_2.await.unwrap();
     }
 }

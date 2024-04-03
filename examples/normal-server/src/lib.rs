@@ -1,5 +1,6 @@
+pub mod actors;
+pub mod connect;
 pub mod settings;
-pub mod service_broadcaster;
 #[cfg(test)]
 pub mod tests_utils;
 

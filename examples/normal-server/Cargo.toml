@@ -5,16 +5,22 @@ edition = "2021"
 
 [dependencies]
 actix = "0.13.3"
+actix-http = "3.6.0"
 actix-rt = "2.9.0"
 actix-web = "4.5.1"
 actix-web-actors = "4.3.0"
 anyhow = "1.0.81"
 async-std = { version = "1.12.0", features = ["attributes"] }
+async-stream = "0.3.5"
 config = "0.14.0"
 env_logger = "0.11.3"
 futures = "0.3.30"
 log = "0.4.21"
+pin-project = "1.1.5"
 serde = { version = "1.0.197", features = ["derive"] }
 serde_json = "1.0.115"
+smallvec = "1.13.2"
 thiserror = "1.0.58"
 tokio = {version = "1.37.0", features = ["sync", "macros"]}
+tokio-stream = "0.1.15"
+tokio-util = {version = "0.7.10", features = ["codec"]}
