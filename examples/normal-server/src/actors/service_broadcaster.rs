@@ -271,11 +271,9 @@ pub(crate) mod test_utils {
 mod tests {
     use std::time::Duration;
 
-    use async_std::net::UdpSocket;
-
     use crate::tests_utils::{settings, setup_logger};
 
-    use super::{test_utils::{log_socket_service_broadcast, setup_broadcaster_from_settings}, Message, ServiceBroadcaster};
+    use super::test_utils::{log_socket_service_broadcast, setup_broadcaster_from_settings};
 
     #[ignore]
     #[actix_rt::test]
@@ -287,9 +285,8 @@ mod tests {
         let broadcaster = setup_broadcaster_from_settings(settings.clone()).await;
         let (broadcaster, _join_handle) = broadcaster.launch();
 
-        let join_handle_2 = actix_rt::spawn(async move {
-            log_socket_service_broadcast(broadcast_info.port).await
-        });
+        let join_handle_2 =
+            actix_rt::spawn(async move { log_socket_service_broadcast(broadcast_info.port).await });
 
         let join_handle_3 = actix_rt::spawn(async move {
             tokio::time::sleep(Duration::from_secs(5)).await;

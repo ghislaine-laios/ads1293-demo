@@ -4,6 +4,7 @@
         "Deque",
         "oneshot",
         "rtype",
+        "smallvec",
         "thiserror",
         "tungstenite"
     ]

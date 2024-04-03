@@ -1,6 +1,6 @@
 use anyhow::Ok;
 use smallvec::SmallVec;
-use tokio::{join, sync::broadcast};
+use tokio::join;
 
 use crate::actors::Handler;
 
@@ -105,7 +105,7 @@ impl ServiceBroadcastManager {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct LaunchedServiceBroadcastManager {
     tx: tokio::sync::mpsc::Sender<actions::Action>,
 }
@@ -197,9 +197,8 @@ mod tests {
     use std::time::Duration;
 
     use crate::{
-        actors::service_broadcaster::{
-            interval_handlers::ServiceBroadcast,
-            test_utils::{log_socket_service_broadcast, setup_broadcaster_from_settings},
+        actors::service_broadcaster::test_utils::{
+            log_socket_service_broadcast, setup_broadcaster_from_settings,
         },
         tests_utils::{settings, setup_logger},
     };
