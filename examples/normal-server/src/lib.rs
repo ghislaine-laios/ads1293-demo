@@ -24,7 +24,8 @@ pub async fn app() -> anyhow::Result<()> {
     let service_broadcaster =
         ServiceBroadcaster::new(settings.bind_to.clone(), settings.broadcast.clone()).await?;
     let service_manager = ServiceBroadcastManager::new(service_broadcaster);
-    let (launched_service_manager, service_manager_fut) = service_manager.launch();
+    let (launched_service_broadcast_manager, service_broadcast_manager_fut) =
+        service_manager.launch();
 
     let bind_to = &settings.bind_to;
     let bind_to = (bind_to.ip.as_str(), bind_to.port);
@@ -32,7 +33,7 @@ pub async fn app() -> anyhow::Result<()> {
     let server_fut = HttpServer::new(move || {
         App::new()
             .wrap(Logger::default())
-            .app_data(web::Data::new(launched_service_manager.clone()))
+            .app_data(web::Data::new(launched_service_broadcast_manager.clone()))
             .service(services::push_data::push_data)
     })
     .bind(bind_to)
@@ -51,7 +52,7 @@ pub async fn app() -> anyhow::Result<()> {
         result = server_fut => {
             result.context("the server ended with error")?;
         },
-        result = service_manager_fut => {
+        result = service_broadcast_manager_fut => {
             handle_service_broadcast_manager_errors(result.unwrap());
             return Err(anyhow::anyhow!("the service broadcast manager ended with error"));
         }
