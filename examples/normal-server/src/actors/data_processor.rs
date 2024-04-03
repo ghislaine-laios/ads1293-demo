@@ -14,11 +14,7 @@ use tokio::select;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::codec::Encoder;
 
-#[derive(Debug, Deserialize, Serialize)]
-pub struct Data {
-    pub id: u32,
-    pub value: u32,
-}
+pub use normal_data::Data;
 
 #[derive(Clone, Copy, Debug)]
 pub enum ConnectionStatus {

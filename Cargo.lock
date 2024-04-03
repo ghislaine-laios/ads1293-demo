@@ -1455,6 +1455,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "normal-data"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "normal-server"
 version = "0.1.0"
 dependencies = [
@@ -1471,6 +1478,7 @@ dependencies = [
  "futures",
  "futures-util",
  "log",
+ "normal-data",
  "pin-project",
  "serde",
  "serde_json",

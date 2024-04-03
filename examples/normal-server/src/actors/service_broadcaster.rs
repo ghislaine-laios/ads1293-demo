@@ -255,7 +255,7 @@ pub(crate) mod test_utils {
 
     pub(crate) async fn log_socket_service_broadcast(port: u16) {
         let socket = UdpSocket::bind(("0.0.0.0", port)).await.unwrap();
-        socket.set_broadcast(true).unwrap();
+        // socket.set_broadcast(true).unwrap();
         let mut buf: [u8; 1024] = [0; 1024];
         for i in 1..10 {
             let (size, addr) = socket.recv_from(&mut buf).await.unwrap();
