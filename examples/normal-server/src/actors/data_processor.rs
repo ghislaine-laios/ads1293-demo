@@ -175,7 +175,7 @@ pub struct ErrorNotificationFailed;
 
 impl DataProcessor {
     async fn handle_frame(&mut self, frame: ws::Frame) -> Result<(), DataProcessingError> {
-        let result = async {
+        async {
             match self.status {
                 ConnectionStatus::Activated => {}
                 ConnectionStatus::SeverRequestClosing => {
@@ -236,28 +236,7 @@ impl DataProcessor {
                 }
             }
         }
-        .await;
-
-        // if let Err(err) = result {
-        //     let generic_err = if !matches!(
-        //         err,
-        //         DataProcessingError::SendToPeerError(SendToPeerError::ChannelClosed)
-        //     ) {
-        //         self.notify_err(err.clone())
-        //             .await
-        //             .map_err(|e| DataProcessingError::InternalBug(Arc::new(e.into())))
-        //             .map_err(|e| GenericDataProcessingError::Uninformed(e))?;
-        //         GenericDataProcessingError::Informed(err)
-        //     } else {
-        //         GenericDataProcessingError::Uninformed(err)
-        //     };
-
-        //     Err(generic_err)
-        // } else {
-        //     Ok(())
-        // }
-
-        result
+        .await
     }
 
     async fn send_to_peer(&mut self, msg: ws::Message) -> Result<(), SendToPeerError> {
