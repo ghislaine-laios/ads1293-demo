@@ -4,6 +4,7 @@
         "Deque",
         "oneshot",
         "rtype",
-        "thiserror"
+        "thiserror",
+        "tungstenite"
     ]
 }
