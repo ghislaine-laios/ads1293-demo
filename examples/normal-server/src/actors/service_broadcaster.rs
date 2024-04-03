@@ -151,7 +151,7 @@ impl ServiceBroadcaster {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct LaunchedServiceBroadcaster {
     pub tx: tokio::sync::mpsc::Sender<actions::Action>,
 }
@@ -166,7 +166,7 @@ impl LaunchedServiceBroadcaster {
     }
 }
 
-pub mod actions {
+pub(super) mod actions {
     #[derive(Debug)]
     pub enum Action {
         SetStatus(SetStatus),
@@ -180,7 +180,7 @@ pub mod actions {
     pub struct Broadcast;
 }
 
-pub mod handlers {
+pub(super) mod handlers {
     use crate::actors::Handler;
 
     use super::{actions, ServiceBroadcaster, Status};

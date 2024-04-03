@@ -1,9 +1,6 @@
 use std::sync::Arc;
 
-use actix_http::{
-    ws::{self, ProtocolError},
-    Payload,
-};
+use actix_http::ws::{self, ProtocolError};
 use actix_web::{
     error::PayloadError,
     web::{self, Bytes, BytesMut},
@@ -16,7 +13,7 @@ use tokio_util::codec::Encoder;
 
 use crate::actors::Handler;
 
-use self::{actions::Action, streams::DataComing};
+use self::streams::DataComing;
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Data {
@@ -314,14 +311,10 @@ pub(super) mod actions {
 }
 
 pub mod handlers {
-    use super::{
-        actions, ConnectionStatus, DataProcessor, GenericDataProcessingError, SendToPeerError,
-    };
+    use super::{actions, DataProcessor};
     use crate::actors::data_processor::DataProcessingError;
     use crate::actors::Handler;
     use std::sync::Arc;
-
-    use actix_http::ws;
 
     use tokio_util::codec::Decoder;
 
@@ -382,14 +375,14 @@ pub(super) mod streams {
 
 #[cfg(test)]
 mod tests {
-    use std::time::{self, Duration};
+    use std::time::Duration;
 
     use actix_web::{
-        get, middleware::Logger, post, web, App, Error, HttpRequest, HttpResponse, HttpServer,
+        get, middleware::Logger, web, App, Error, HttpRequest, HttpResponse, HttpServer,
     };
     use anyhow::Context;
     use futures::SinkExt;
-    use tokio::join;
+
     use tokio_tungstenite::connect_async;
     use url::Url;
 
@@ -435,6 +428,8 @@ mod tests {
 
         dbg!(resp);
 
+        // Feed the data. Lots of data.
+
         let total_num: u32 = 3000;
         let mut data_arr = Vec::with_capacity(total_num.try_into().unwrap());
         for i in 1..total_num {
@@ -444,12 +439,20 @@ mod tests {
             })
         }
 
-        for data in data_arr {
+        for data in data_arr.iter() {
             socket
-                .feed(Text(serde_json::to_string(&data).unwrap()))
+                .feed(Text(serde_json::to_string(data).unwrap()))
                 .await
                 .unwrap();
             socket.flush().await.unwrap();
+        }
+
+        for i in 1..10 {
+            socket
+                .send(Text(serde_json::to_string(&data_arr[i]).unwrap()))
+                .await
+                .unwrap();
+            actix_rt::time::sleep(Duration::from_millis(100)).await;
         }
 
         actix_rt::time::sleep(Duration::from_millis(500)).await;
