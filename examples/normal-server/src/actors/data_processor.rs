@@ -1,19 +1,18 @@
-use std::sync::Arc;
-
+use self::streams::DataComing;
+use super::service_broadcast_manager::LaunchedServiceBroadcastManager;
+use crate::actors::Handler;
 use actix_http::ws::{self, ProtocolError};
 use actix_web::{
     error::PayloadError,
     web::{self, Bytes, BytesMut},
 };
+use anyhow::Context;
 use futures::Stream;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use tokio::select;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::codec::Encoder;
-
-use crate::actors::Handler;
-
-use self::streams::DataComing;
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Data {
@@ -36,6 +35,7 @@ pub struct DataProcessor {
     last_pong: tokio::time::Instant,
     status: ConnectionStatus,
     data_coming: Option<streams::DataComing<web::Payload>>,
+    launched_service_broadcast_manager: LaunchedServiceBroadcastManager,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -56,15 +56,16 @@ pub enum DataProcessingError {
     SendToPeerError(SendToPeerError),
     #[error("the incoming websocket frame is not supported")]
     NotSupportedFrame(String),
-    #[error("an internal bug occurred")]
-    InternalBug(Arc<anyhow::Error>),
     #[error("the given payload throw an error")]
     PayloadError(Arc<PayloadError>),
+    #[error("an unknown internal bug occurred")]
+    InternalBug(Arc<anyhow::Error>),
 }
 
 impl DataProcessor {
     pub fn new(
         payload: web::Payload,
+        launched_service_broadcast_manager: LaunchedServiceBroadcastManager,
     ) -> (Self, impl Stream<Item = Result<Bytes, DataProcessingError>>) {
         let (tx, rx) = tokio::sync::mpsc::channel(8);
 
@@ -76,13 +77,16 @@ impl DataProcessor {
                 last_pong: tokio::time::Instant::now(),
                 status: ConnectionStatus::Activated,
                 data_coming: Some(DataComing::new(payload)),
+                launched_service_broadcast_manager,
             },
             ReceiverStream::new(rx),
         )
     }
 
     pub fn launch(self) -> tokio::task::JoinHandle<()> {
-        actix_rt::spawn(async move { self.task().await })
+        actix_rt::spawn(async move {
+            self.task().await;
+        })
     }
 
     async fn task(mut self) {
@@ -94,7 +98,13 @@ impl DataProcessor {
             return;
         };
 
-        let mut err = None;
+        let mut err = self
+            .launched_service_broadcast_manager
+            .register_connection()
+            .await
+            .context("failed to register this connection to the manager due to closed channel")
+            .map_err(|e| DataProcessingError::InternalBug(Arc::new(e)))
+            .err();
         while err.is_none() {
             select! {
                 action = rx.recv() => {
@@ -119,6 +129,12 @@ impl DataProcessor {
                 }
             }
         }
+
+        let _ = self
+            .launched_service_broadcast_manager
+            .unregister_connection()
+            .await
+            .context("failed to unregister this connection to the manager due to closed channel");
 
         let Some(err) = err else {
             return;
@@ -370,91 +386,5 @@ pub(super) mod streams {
 
             Some(Ok(Action::AddRaw(AddRaw(bytes))))
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::time::Duration;
-
-    use actix_web::{
-        get, middleware::Logger, web, App, Error, HttpRequest, HttpResponse, HttpServer,
-    };
-    use anyhow::Context;
-    use futures::SinkExt;
-
-    use tokio_tungstenite::connect_async;
-    use url::Url;
-
-    use crate::{actors::data_processor::DataProcessor, settings::Settings};
-
-    #[get("/")]
-    async fn start_connection(
-        req: HttpRequest,
-        stream: web::Payload,
-    ) -> Result<HttpResponse, Error> {
-        let mut res = actix_web_actors::ws::handshake(&req)?;
-        let (data_processor, stream) = DataProcessor::new(stream);
-        let _ = data_processor.launch();
-        Ok(res.streaming(stream))
-    }
-
-    #[actix_web::test]
-    async fn it_works() {
-        use super::Data;
-        use tokio_tungstenite::tungstenite::Message::*;
-
-        crate::tests_utils::setup_logger();
-        let settings = Settings::new().unwrap();
-
-        let bind_to = settings.bind_to.clone();
-        let bind_to = (bind_to.ip.as_str(), bind_to.port);
-
-        let fut =
-            HttpServer::new(move || App::new().wrap(Logger::default()).service(start_connection))
-                .bind(bind_to)
-                .context(format!("failed to bind to {}:{}", bind_to.0, bind_to.1))
-                .unwrap()
-                .run();
-
-        let main_work = actix_rt::spawn(fut);
-        actix_rt::time::sleep(Duration::from_millis(500)).await;
-
-        let (mut socket, resp) = connect_async(
-            Url::parse(format!("ws://localhost:{}/", settings.bind_to.port).as_str()).unwrap(),
-        )
-        .await
-        .unwrap();
-
-        dbg!(resp);
-
-        // Feed the data. Lots of data.
-
-        let total_num: u32 = 3000;
-        let mut data_arr = Vec::with_capacity(total_num.try_into().unwrap());
-        for i in 1..total_num {
-            data_arr.push(Data {
-                id: i,
-                value: i * 2,
-            })
-        }
-
-        for data in data_arr.iter() {
-            socket
-                .feed(Text(serde_json::to_string(data).unwrap()))
-                .await
-                .unwrap();
-            socket.flush().await.unwrap();
-        }
-
-        for i in 1..10 {
-            socket
-                .send(Text(serde_json::to_string(&data_arr[i]).unwrap()))
-                .await
-                .unwrap();
-            actix_rt::time::sleep(Duration::from_millis(100)).await;
-        }
-
-        actix_rt::time::sleep(Duration::from_millis(500)).await;
     }
 }

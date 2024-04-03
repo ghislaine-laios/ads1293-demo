@@ -8,6 +8,7 @@ pub(crate) fn setup_logger() {
     INIT.call_once(|| {
         env_logger::Builder::from_default_env()
             .filter_module(super::MODULE_PATH, log::LevelFilter::Debug)
+            .filter_module("actix_web", log::LevelFilter::Debug)
             .init();
 
         log::debug!(
