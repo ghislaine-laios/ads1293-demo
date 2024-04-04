@@ -74,7 +74,7 @@ impl DataProcessor {
                 status: ConnectionStatus::Activated,
                 data_coming: Some(DataComing::new(payload)),
                 launched_service_broadcast_manager,
-                alive_checker: Some(CheckAlive::new(Duration::from_secs(5))),
+                alive_checker: Some(CheckAlive::new(Duration::from_secs(15))),
                 last_pong: tokio::time::Instant::now(),
             },
             ReceiverStream::new(rx),
@@ -317,7 +317,7 @@ impl DataProcessor {
     }
 
     async fn process_data(&mut self, data: Data) {
-        log::info!("data: {:?}", data);
+        log::debug!("data: {:?}", data);
     }
 }
 

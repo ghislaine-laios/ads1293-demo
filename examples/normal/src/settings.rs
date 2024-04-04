@@ -21,7 +21,7 @@ pub struct Settings {
 }
 
 impl Settings {
-    pub fn init() -> Result<(), config::ConfigError> {
+    pub fn init() -> Result<&'static Settings, config::ConfigError> {
         use config::{Config, File, FileFormat};
 
         let default_settings = include_str!("../settings.default.toml");
@@ -35,6 +35,6 @@ impl Settings {
 
         SETTINGS.set(config).unwrap();
 
-        Ok(())
+        Ok(SETTINGS.get().unwrap())
     }
 }

@@ -21,14 +21,21 @@ use esp_idf_svc::ws::client::EspWebSocketClient;
 use esp_idf_svc::ws::client::EspWebSocketClientConfig;
 use esp_idf_svc::ws::FrameType;
 use esp_idf_sys::EspError;
+use futures_util::SinkExt;
 use normal_data::Data;
 use normal_data::ServiceMessage;
 use normal_data::PUSH_DATA_ENDPOINT;
 use normal_data::SERVICE_MESSAGE_SERIALIZE_MAX_LEN;
 use normal_data::SERVICE_NAME;
 use std::net::SocketAddr;
+use std::net::SocketAddrV4;
 use std::net::UdpSocket;
 use std::time::Duration;
+use tokio::net::TcpStream;
+use tokio_tungstenite::connect_async;
+use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::MaybeTlsStream;
+use tokio_tungstenite::WebSocketStream;
 
 pub struct ConnectWifiPayload<M: WifiModemPeripheral, Modem: Peripheral<P = M>> {
     pub modem: Modem,
@@ -37,31 +44,29 @@ pub struct ConnectWifiPayload<M: WifiModemPeripheral, Modem: Peripheral<P = M>> 
     pub timer_service: EspTaskTimerService,
 }
 
-pub async fn communication<'d, M: WifiModemPeripheral, Modem: Peripheral<P = M>>(
-    connect_wifi_payload: ConnectWifiPayload<M, Modem>,
-    data_receiver: Receiver<'d, CriticalSectionRawMutex, Data, 256>,
-) -> anyhow::Result<()> {
-    let settings = SETTINGS.get().expect("the settings are not initialized");
+pub async fn communication(
+    socket: &mut WebSocketStream<MaybeTlsStream<TcpStream>>,
+    mut data_receiver: tokio::sync::mpsc::Receiver<Data>,
+) {
+    let mut count = 0;
+    while let Some(data) = data_receiver.recv().await {
+        // log::debug!("{:?}", data);
+        let str = serde_json::to_string(&data)
+            .map_err(|e| format!("cannot serialize the data: {:#?}", e))
+            .unwrap();
+        socket.feed(Message::text(str)).await.unwrap();
 
-    let _wifi = connect_wifi(
-        settings,
-        connect_wifi_payload.modem,
-        connect_wifi_payload.sys_loop,
-        connect_wifi_payload.nvs,
-        connect_wifi_payload.timer_service,
-    )
-    .await?;
-
-    loop {
-        if let Err(e) = serve(settings.service.broadcast_port, data_receiver).await {
-            log::warn!("failed to serve: {:?}", e);
+        count+=1;
+        if count == 30 {
+            log::info!("flush! last data id: {}", data.id);
+            socket.flush().await.unwrap();
+            log::info!("flushed!");
+            count = 0;
         }
     }
-
-    Ok(())
 }
 
-async fn connect_wifi<'d, M: WifiModemPeripheral>(
+pub async fn connect_wifi<'d, M: WifiModemPeripheral>(
     settings: &Settings,
     modem: impl Peripheral<P = M> + 'd,
     sys_loop: EspSystemEventLoop,
@@ -99,13 +104,27 @@ async fn connect_wifi<'d, M: WifiModemPeripheral>(
     Ok(wifi)
 }
 
+pub async fn setup_websocket(
+    addr: SocketAddrV4,
+) -> WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>> {
+    let url = format!("ws://{}{}", addr, PUSH_DATA_ENDPOINT);
+
+    log::info!("websocket is connecting to {}", url.as_str());
+
+    let (socket, resp) = connect_async(url).await.unwrap();
+
+    log::info!("websocket resp: {:?}", resp);
+
+    socket
+}
+
 #[derive(Debug, thiserror::Error)]
-enum ServiceDiscoveryError {
+pub enum ServiceDiscoveryError {
     #[error("the attempt to deserialize the data received from the service discovery port ({}) has reached its maximum limit.", .0)]
     DeserializationFailed(u16),
 }
 
-fn discover_service(port: u16) -> Result<(SocketAddr, u16), ServiceDiscoveryError> {
+pub fn discover_service(port: u16) -> Result<(SocketAddr, u16), ServiceDiscoveryError> {
     log::debug!("Starting to discover the service");
     let socket = UdpSocket::bind(("0.0.0.0", port)).expect("failed to bind the udp socket");
     let mut buf = [0; SERVICE_MESSAGE_SERIALIZE_MAX_LEN];
@@ -137,116 +156,4 @@ fn discover_service(port: u16) -> Result<(SocketAddr, u16), ServiceDiscoveryErro
     };
 
     Ok((addr, service_info.bind_to.port))
-}
-
-#[derive(Debug, thiserror::Error)]
-enum ServeError {
-    #[error("failed to establish websocket connection with the sever")]
-    ConnectFailed(#[source] EspIOError),
-    #[error("failed to send data through websocket")]
-    SendFailed(#[source] EspError),
-}
-
-static WS_CHANNEL: embassy_sync::channel::Channel<
-    CriticalSectionRawMutex,
-    (FrameType, Vec<u8>),
-    4,
-> = embassy_sync::channel::Channel::new();
-
-async fn serve<'d>(
-    broadcast_port: u16,
-    data_receiver: Receiver<'d, CriticalSectionRawMutex, Data, 256>,
-) -> Result<(), ServeError> {
-    let (addr, port) = discover_service(broadcast_port).expect("failed to discover the service");
-
-    let SocketAddr::V4(mut addr) = addr else {
-        panic!("the service use ipv6 stack but it's not supported");
-    };
-
-    addr.set_port(port);
-    let url = format!("ws://{}{}", addr, PUSH_DATA_ENDPOINT);
-
-    let ws_sender = WS_CHANNEL.sender();
-    let ws_receiver = WS_CHANNEL.receiver();
-
-    let mut ws_client = EspWebSocketClient::new(
-        &url,
-        &EspWebSocketClientConfig {
-            ping_interval_sec: Duration::from_secs(1),
-            reconnect_timeout_ms: Duration::from_millis(200),
-            network_timeout_ms: Duration::from_millis(200),
-            ..Default::default()
-        },
-        Duration::from_secs(10),
-        move |event| {
-            let event = match event {
-                Ok(e) => e,
-                Err(e) => {
-                    log::error!("received error websocket event: {:?}", e);
-                    return;
-                }
-            };
-
-            match event.event_type {
-                // esp_idf_svc::ws::client::WebSocketEventType::BeforeConnect => todo!(),
-                // esp_idf_svc::ws::client::WebSocketEventType::Connected => todo!(),
-                // esp_idf_svc::ws::client::WebSocketEventType::Disconnected => todo!(),
-                // esp_idf_svc::ws::client::WebSocketEventType::Close(_) => todo!(),
-                // esp_idf_svc::ws::client::WebSocketEventType::Closed => todo!(),
-                // esp_idf_svc::ws::client::WebSocketEventType::Text(_) => todo!(),
-                // esp_idf_svc::ws::client::WebSocketEventType::Binary(_) => todo!(),
-                // esp_idf_svc::ws::client::WebSocketEventType::Ping => {
-                //     ws_sender.send(FrameType::Pong);
-                // }
-                esp_idf_svc::ws::client::WebSocketEventType::Pong => {
-                    log::debug!("websocket pong.");
-                }
-                _ => {}
-            };
-        },
-    )
-    .map_err(ServeError::ConnectFailed)?;
-
-    let mut last_data = None;
-    let mut counter = 0;
-    loop {
-        let result = select::select(
-            async {
-                let msg = ws_receiver.receive().await;
-                counter += 1;
-                if counter >= 60 {
-                    log::info!("msg: {:?}", msg);
-                    counter = 0;
-                }
-                // ws_client
-                //     .send(msg.0, msg.1.as_ref())
-                //     .map_err(ServeError::SendFailed)?;
-
-                Ok::<(), ServeError>(())
-            },
-            async {
-                // For cancellation safety
-                if let Some(data) = &last_data {
-                    let raw = serde_json::to_vec(data).expect("failed to serialize the data");
-                    if let Err(TrySendError::Full(r)) = ws_sender.try_send((FrameType::Text(false), raw)) {
-                        log::warn!("the ws_channel is full. unexpected.");
-                        ws_sender.send(r).await;
-                    }
-                    last_data = None;
-                }
-                last_data = Some(data_receiver.receive().await);
-            },
-        )
-        .await;
-
-        if let Either::First(result) = result {
-            result?;
-        }
-
-        // let water_mark =
-        //     unsafe { esp_idf_sys::uxTaskGetStackHighWaterMark2(core::ptr::null_mut()) };
-        // dbg!(water_mark);
-    }
-
-    Ok(())
 }

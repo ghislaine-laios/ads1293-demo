@@ -1,3 +1,6 @@
+use std::net::SocketAddr;
+use std::time::Duration;
+
 use ads1293_demo::driver::initialization::Application3Lead;
 use ads1293_demo::driver::initialization::Initializer;
 use ads1293_demo::driver::registers;
@@ -10,6 +13,7 @@ use embassy_futures::select::select;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::channel::Sender;
+use embedded_hal::spi::SpiDevice;
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::delay;
 use esp_idf_svc::hal::gpio::OutputPin;
@@ -27,12 +31,18 @@ use esp_idf_svc::hal::timer::TimerConfig;
 use esp_idf_svc::hal::timer::TimerDriver;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use esp_idf_svc::timer::EspTaskTimerService;
+use esp_idf_sys::esp;
 use esp_idf_sys::esp_timer_get_time;
+use futures_util::SinkExt;
 use normal::communication::communication;
+use normal::communication::connect_wifi;
+use normal::communication::discover_service;
+use normal::communication::setup_websocket;
 use normal::communication::ConnectWifiPayload;
 use normal::settings::Settings;
 use normal_data::Data;
 use serde::de;
+use tokio::sync::mpsc::error::TrySendError;
 
 static DATA_CHANNEL: embassy_sync::channel::Channel<
     CriticalSectionRawMutex,
@@ -48,90 +58,97 @@ fn main() -> anyhow::Result<()> {
     // Bind the log crate to the ESP Logging facilities
     esp_idf_svc::log::EspLogger::initialize_default();
 
+    // eventfd is needed by our mio poll implementation.  Note you should set max_fds
+    // higher if you have other code that may need eventfd.
+    log::info!("Setting up eventfd...");
+    let config = esp_idf_sys::esp_vfs_eventfd_config_t {
+        max_fds: 4,
+        ..Default::default()
+    };
+    esp! { unsafe { esp_idf_sys::esp_vfs_eventfd_register(&config) } }?;
+
     log::info!("hello world!");
-    Settings::init().expect("failed to parse settings");
+
+    let settings = Settings::init().expect("failed to parse settings");
 
     let peripherals = Peripherals::take().expect("error when trying to take peripherals");
 
     let led_pin = peripherals.pins.gpio27;
-    let timer00 = peripherals.timer00;
-    let timer01 = peripherals.timer01;
-
-    let spi = SpiDriver::new(
-        peripherals.spi2,
-        peripherals.pins.gpio14,
-        peripherals.pins.gpio13,
-        Some(peripherals.pins.gpio12),
-        &SpiDriverConfig::new(),
-    )
-    .expect("failed when setting up the SPI interface (2)");
+    let spi2 = peripherals.spi2;
+    let sclk = peripherals.pins.gpio14;
+    let sdo = peripherals.pins.gpio13;
+    let sdi = peripherals.pins.gpio12;
 
     let ads1293_cs = peripherals.pins.gpio15;
 
     let data_sender = DATA_CHANNEL.sender();
     let data_receiver = DATA_CHANNEL.receiver();
 
-    ThreadSpawnConfiguration {
-        pin_to_core: Some(esp_idf_svc::hal::cpu::Core::Core0),
-        priority: 23,
-        ..Default::default()
-    }
-    .set()
-    .unwrap();
+    let connect_wifi_payload = ConnectWifiPayload {
+        modem: peripherals.modem,
+        sys_loop: EspSystemEventLoop::take().expect("cannot take the system event loop"),
+        nvs: EspDefaultNvsPartition::take().expect("cannot take the default nvs partition"),
+        timer_service: EspTaskTimerService::new().expect("cannot new the ESP task timer service"),
+    };
 
-    let thread_1 = std::thread::Builder::new()
-        .name("thread 1".to_owned())
-        .stack_size(4096)
-        .spawn(move || {
-            task::block_on(async move {
-                select(
-                    led(led_pin, timer00),
-                    data(spi, ads1293_cs, timer01, data_sender),
-                )
-                .await;
-            });
-        })
-        .context("failed to spawn the thread 1")?;
+    let wifi_fut = connect_wifi(
+        settings,
+        connect_wifi_payload.modem,
+        connect_wifi_payload.sys_loop,
+        connect_wifi_payload.nvs,
+        connect_wifi_payload.timer_service,
+    );
 
-    ThreadSpawnConfiguration {
-        pin_to_core: Some(esp_idf_svc::hal::cpu::Core::Core1),
-        priority: 23,
-        ..Default::default()
-    }
-    .set()
-    .unwrap();
+    let _wifi = task::block_on(wifi_fut).unwrap();
 
-    let _thread_2 = std::thread::Builder::new()
-        .name("thread 2".to_owned())
-        .stack_size(8192)
-        .spawn(move || {
-            task::block_on(async move {
-                let connect_wifi_payload = ConnectWifiPayload {
-                    modem: peripherals.modem,
-                    sys_loop: EspSystemEventLoop::take()
-                        .expect("cannot take the system event loop"),
-                    nvs: EspDefaultNvsPartition::take()
-                        .expect("cannot take the default nvs partition"),
-                    timer_service: EspTaskTimerService::new()
-                        .expect("cannot new the ESP task timer service"),
-                };
+    log::info!("the wifi has been setup");
 
-                communication(connect_wifi_payload, data_receiver).await
-            })
-        })
-        .unwrap();
+    let (addr, port) =
+        discover_service(settings.service.broadcast_port).expect("failed to discover service");
 
-    thread_1
-        .join()
-        .map_err(|e| anyhow::Error::msg(format!("the thread 1 panicked: {:#?}", e)))?;
+    let SocketAddr::V4(mut addr) = addr else {
+        panic!("the service use ipv6 stack but it's not supported");
+    };
+
+    addr.set_port(port);
+
+    log::info!("the service is discovered");
+
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("failed to setup tokio runtime")
+        .block_on(async move {
+            tokio::spawn(led(led_pin));
+
+            let mut socket = setup_websocket(addr).await;
+            log::info!("the websocket client has been setup");
+
+            let (tx, rx) = tokio::sync::mpsc::channel(2);
+
+            let spi = SpiDriver::new(spi2, sclk, sdo, Some(sdi), &SpiDriverConfig::new())
+                .expect("failed when setting up the SPI interface (2)");
+
+            let mut config = spi::SpiConfig::default();
+            config.baudrate = Hertz(2_000_000);
+
+            let device = SpiDeviceDriver::new(spi, Some(ads1293_cs), &config)
+                .expect("failed when setting up the SpiDevice of ads1293");
+
+            let ws = async {
+                communication(&mut socket, rx).await;
+                socket.flush().await.unwrap();
+            };
+
+            select(data(device, tx), ws).await;
+            log::error!("some routine exits!");
+        });
 
     anyhow::Ok(())
 }
 
-async fn led<L: OutputPin, T: Timer>(led_pin: L, timer: impl Peripheral<P = T>) {
+async fn led<L: OutputPin>(led_pin: L) {
     let mut led_pin = PinDriver::output(led_pin).expect("failed to take the led pin");
-
-    let mut timer = TimerDriver::new(timer, &TimerConfig::new()).expect("failed to make the timer");
 
     let mut next_low = true;
 
@@ -144,27 +161,13 @@ async fn led<L: OutputPin, T: Timer>(led_pin: L, timer: impl Peripheral<P = T>) 
                 .expect("failed to set the led pin to high");
         }
 
-        timer
-            .delay(timer.tick_hz())
-            .await
-            .expect("failed to delay using timer");
-
         next_low = !next_low;
+
+        tokio::time::sleep(Duration::from_secs(1)).await;
     }
 }
 
-async fn data<T: Timer>(
-    spi: SpiDriver<'_>,
-    cs: impl OutputPin,
-    timer: impl Peripheral<P = T>,
-    data_sender: Sender<'_, CriticalSectionRawMutex, Data, 256>,
-) {
-    let mut config = spi::SpiConfig::default();
-    config.baudrate = Hertz(2_000_000);
-
-    let device = SpiDeviceDriver::new(spi, Some(cs), &config)
-        .expect("failed when setting up the SpiDevice of ads1293");
-
+async fn data(device: impl SpiDevice, data_sender: tokio::sync::mpsc::Sender<Data>) {
     let mut ads1293 = ADS1293::new(device);
 
     ads1293
@@ -179,15 +182,6 @@ async fn data<T: Timer>(
 
     log::info!("main_config: {:#?}", main_config);
 
-    let mut timer = TimerDriver::new(
-        timer,
-        &TimerConfig {
-            divider: 40000,
-            ..Default::default()
-        },
-    )
-    .expect("failed to create the data timer");
-
     let loop_back_mode_config = ads1293
         .read(registers::CH_CNFG)
         .expect("fail to read loop back mode config");
@@ -195,16 +189,15 @@ async fn data<T: Timer>(
 
     let mut id = 0;
     let mut perf_counter = 0;
-    let mut fail_counter = 0;
+    let mut fail_counter = 60;
     let mut start_time = unsafe { esp_timer_get_time() };
-    let tick_hz = timer.tick_hz();
-    let delay_tick = tick_hz / 63;
-    loop {
+    let frame_duration = Duration::from_secs_f32(1.0 / 60.0);
+    let mut sleep_deadline = tokio::time::Instant::now();
+    'out: loop {
+        tokio::time::sleep_until(sleep_deadline).await;
         perf_counter += 1;
-        timer
-            .delay(delay_tick)
-            .await
-            .expect("failed to delay using timer");
+        sleep_deadline = sleep_deadline.checked_add(frame_duration).unwrap();
+
         let data_status = ads1293.read(DATA_STATUS).expect("fail to read data status");
 
         let data_vec = ads1293
@@ -217,14 +210,22 @@ async fn data<T: Timer>(
                 continue;
             };
 
-            if let Err(_) = data_sender.try_send(Data {
+            if let Err(e) = data_sender.try_send(Data {
                 id,
                 value: data.into(),
             }) {
-                fail_counter += 1;
-                if fail_counter == 60 {
-                    fail_counter = 0;
-                    log::warn!("the data channel is full. lots of data is dropped.");
+                match e {
+                    // I drop the data directly to ensure that 
+                    // the data's ID remains reliable for timing purposes.
+                    TrySendError::Full(data) => {
+                        if fail_counter == 60 {
+                            log::warn!("the data channel is full. the data will be dropped.");
+                            fail_counter = 0;
+                        }
+
+                        fail_counter += 1;
+                    }
+                    TrySendError::Closed(_) => break 'out,
                 }
             }
 
