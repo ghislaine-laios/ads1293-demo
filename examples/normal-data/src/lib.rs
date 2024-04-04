@@ -1,12 +1,13 @@
 use serde::{Deserialize, Serialize};
 
+pub const DATA_SERIALIZE_MAX_LEN: usize = 32;
+pub const PUSH_DATA_ENDPOINT: &'static str = "/push-data";
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Data {
     pub id: u32,
     pub value: u32,
 }
-
-pub const DATA_SERIALIZE_MAX_LEN: usize = 32;
 
 impl Data {
     pub fn deserialize_from_json(slice: &[u8]) -> Result<Data, serde_json::Error> {

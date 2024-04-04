@@ -1,4 +1,4 @@
-use self::streams::DataComing;
+use self::{interval::CheckAlive, streams::DataComing};
 use super::service_broadcast_manager::LaunchedServiceBroadcastManager;
 use crate::actors::Handler;
 use actix_http::ws::{self, ProtocolError};
@@ -9,7 +9,7 @@ use actix_web::{
 use anyhow::Context;
 use futures::Stream;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 use tokio::select;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::codec::Encoder;
@@ -28,10 +28,11 @@ pub struct DataProcessor {
     buf: BytesMut,
     codec: ws::Codec,
     ws_sender: tokio::sync::mpsc::Sender<Result<Bytes, DataProcessingError>>,
-    last_pong: tokio::time::Instant,
     status: ConnectionStatus,
     data_coming: Option<streams::DataComing<web::Payload>>,
     launched_service_broadcast_manager: LaunchedServiceBroadcastManager,
+    alive_checker: Option<interval::CheckAlive>,
+    last_pong: tokio::time::Instant,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -70,10 +71,11 @@ impl DataProcessor {
                 buf: BytesMut::new(),
                 codec: ws::Codec::new(),
                 ws_sender: tx,
-                last_pong: tokio::time::Instant::now(),
                 status: ConnectionStatus::Activated,
                 data_coming: Some(DataComing::new(payload)),
                 launched_service_broadcast_manager,
+                alive_checker: Some(CheckAlive::new(Duration::from_secs(5))),
+                last_pong: tokio::time::Instant::now(),
             },
             ReceiverStream::new(rx),
         )
@@ -86,11 +88,16 @@ impl DataProcessor {
     }
 
     async fn task(mut self) {
+        log::debug!("new data processor started");
         let (tx, mut rx) = tokio::sync::mpsc::channel::<actions::Action>(1);
 
-        let data_coming = self.data_coming.take();
-        let Some(mut data_coming) = data_coming else {
+        let Some(mut data_coming) = self.data_coming.take() else {
             log::error!("Cannot take the websocket data source. This task may has run before.");
+            return;
+        };
+
+        let Some(mut alive_checker) = self.alive_checker.take() else {
+            log::error!("Cannot take the alive checker. This task may has run before.");
             return;
         };
 
@@ -102,6 +109,8 @@ impl DataProcessor {
             .map_err(|e| DataProcessingError::InternalBug(Arc::new(e)))
             .err();
         while err.is_none() {
+            alive_checker.update_last_pong(self.last_pong);
+
             select! {
                 action = rx.recv() => {
                     let Some(action) = action else {break;};
@@ -122,15 +131,21 @@ impl DataProcessor {
                             err = Some(DataProcessingError::PayloadError(Arc::new(e)));
                         },
                     }
+                },
+                alive = alive_checker.tick() => {
+                    if !alive {break;}
                 }
             }
         }
 
-        let _ = self
+        let e = self
             .launched_service_broadcast_manager
             .unregister_connection()
             .await
             .context("failed to unregister this connection to the manager due to closed channel");
+        if e.is_err() {
+            log::error!("{:?}", e);
+        }
 
         let Some(err) = err else {
             return;
@@ -184,6 +199,7 @@ pub struct ErrorNotificationFailed;
 
 impl DataProcessor {
     async fn handle_frame(&mut self, frame: ws::Frame) -> Result<(), DataProcessingError> {
+        log::debug!("frame: {:?}", frame);
         async {
             match self.status {
                 ConnectionStatus::Activated => {}
@@ -204,6 +220,8 @@ impl DataProcessor {
                 }
             }
 
+            self.last_pong = tokio::time::Instant::now();
+
             match frame {
                 actix_http::ws::Frame::Text(text) => {
                     let data = serde_json::from_slice(&text[..])
@@ -222,7 +240,6 @@ impl DataProcessor {
                     .await
                     .map_err(DataProcessingError::SendToPeerError),
                 actix_http::ws::Frame::Pong(_) => {
-                    self.last_pong = tokio::time::Instant::now();
                     Ok(())
                 }
                 actix_http::ws::Frame::Close(_) => {
@@ -346,6 +363,40 @@ pub mod handlers {
             }
 
             Ok(())
+        }
+    }
+}
+
+pub(super) mod interval {
+    use std::time::Duration;
+
+    pub struct CheckAlive {
+        timeout: Duration,
+        last_pong: tokio::time::Instant,
+        ticker: tokio::time::Interval,
+    }
+
+    impl CheckAlive {
+        pub fn new(timeout: Duration) -> Self {
+            Self {
+                timeout,
+                last_pong: tokio::time::Instant::now(),
+                ticker: tokio::time::interval(Duration::from_secs(1)),
+            }
+        }
+
+        pub async fn tick(&mut self) -> bool {
+            let instant = self.ticker.tick().await;
+
+            let last_pong = self.last_pong.clone();
+            let duration = instant.duration_since(last_pong);
+            log::debug!("check alive duration: {:?}", duration);
+
+            duration <= self.timeout
+        }
+
+        pub fn update_last_pong(&mut self, pong: tokio::time::Instant) {
+            self.last_pong = pong
         }
     }
 }

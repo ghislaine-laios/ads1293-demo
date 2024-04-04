@@ -1,4 +1,4 @@
-use self::{actions::Action, interval_handlers::ServiceBroadcast};
+use self::{actions::Action, interval::ServiceBroadcast};
 use crate::{
     actors::Handler,
     settings::{self, BroadcastInfo},
@@ -24,7 +24,7 @@ pub struct ServiceBroadcaster {
     #[allow(dead_code)]
     message: Message,
     raw_message: Vec<u8>,
-    service_broadcast: Option<interval_handlers::ServiceBroadcast>,
+    service_broadcast: Option<interval::ServiceBroadcast>,
 }
 
 impl ServiceBroadcaster {
@@ -210,7 +210,7 @@ pub(super) mod handlers {
     }
 }
 
-pub(super) mod interval_handlers {
+pub(super) mod interval {
     use std::time::Duration;
 
     use super::actions::{Action, Broadcast};

@@ -2,16 +2,16 @@ use ads1293_demo::driver::initialization::Application3Lead;
 use ads1293_demo::driver::initialization::Initializer;
 use ads1293_demo::driver::registers;
 use ads1293_demo::driver::registers::access::ReadFromRegister;
+use ads1293_demo::driver::registers::DATA_STATUS;
 use ads1293_demo::driver::ADS1293;
 use anyhow::Context;
 use embassy_futures::select::select;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
-use embassy_sync::channel::Receiver;
+use embassy_sync::channel::Sender;
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::gpio::OutputPin;
 use esp_idf_svc::hal::gpio::PinDriver;
-use esp_idf_svc::hal::modem::WifiModemPeripheral;
 use esp_idf_svc::hal::peripheral::Peripheral;
 use esp_idf_svc::hal::prelude::*;
 use esp_idf_svc::hal::spi;
@@ -24,18 +24,11 @@ use esp_idf_svc::hal::timer::TimerConfig;
 use esp_idf_svc::hal::timer::TimerDriver;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use esp_idf_svc::timer::EspTaskTimerService;
-use esp_idf_svc::wifi;
-use esp_idf_svc::wifi::AsyncWifi;
-use esp_idf_svc::wifi::ClientConfiguration;
-use esp_idf_svc::wifi::EspWifi;
+use normal::communication::communication;
+use normal::communication::ConnectWifiPayload;
 use normal::settings::Settings;
-use normal::settings::SETTINGS;
 use normal_data::Data;
-use normal_data::ServiceMessage;
-use normal_data::SERVICE_MESSAGE_SERIALIZE_MAX_LEN;
-use normal_data::SERVICE_NAME;
-use std::net::SocketAddr;
-use std::net::UdpSocket;
+use serde::de;
 
 static DATA_CHANNEL: embassy_sync::channel::Channel<
     CriticalSectionRawMutex,
@@ -71,7 +64,7 @@ fn main() -> anyhow::Result<()> {
 
     let ads1293_cs = peripherals.pins.gpio15;
 
-    let _data_sender = DATA_CHANNEL.sender();
+    let data_sender = DATA_CHANNEL.sender();
     let data_receiver = DATA_CHANNEL.receiver();
 
     let thread_1 = std::thread::Builder::new()
@@ -79,7 +72,11 @@ fn main() -> anyhow::Result<()> {
         .stack_size(4096)
         .spawn(move || {
             task::block_on(async move {
-                select(led(led_pin, timer00), data(spi, ads1293_cs, timer01)).await;
+                select(
+                    led(led_pin, timer00),
+                    data(spi, ads1293_cs, timer01, data_sender),
+                )
+                .await;
             });
         })
         .context("failed to spawn the thread 1")?;
@@ -136,7 +133,12 @@ async fn led<L: OutputPin, T: Timer>(led_pin: L, timer: impl Peripheral<P = T>) 
     }
 }
 
-async fn data<T: Timer>(spi: SpiDriver<'_>, cs: impl OutputPin, timer: impl Peripheral<P = T>) {
+async fn data<T: Timer>(
+    spi: SpiDriver<'_>,
+    cs: impl OutputPin,
+    timer: impl Peripheral<P = T>,
+    data_sender: Sender<'_, CriticalSectionRawMutex, Data, 32>,
+) {
     let mut config = spi::SpiConfig::default();
     config.baudrate = Hertz(2_000_000);
 
@@ -157,124 +159,37 @@ async fn data<T: Timer>(spi: SpiDriver<'_>, cs: impl OutputPin, timer: impl Peri
 
     log::info!("main_config: {:#?}", main_config);
 
-    let mut timer =
-        TimerDriver::new(timer, &TimerConfig::new()).expect("failed to create the data timer");
+    let mut timer = TimerDriver::new(
+        timer,
+        &TimerConfig {
+            ..Default::default()
+        },
+    )
+    .expect("failed to create the data timer");
 
+    let loop_back_mode_config = ads1293
+        .read(registers::CH_CNFG)
+        .expect("fail to read loop back mode config");
+    log::info!("loop_back_mode_config: {:#?}", loop_back_mode_config);
+
+    let mut counter = 0;
     loop {
         timer
-            .delay(timer.tick_hz())
+            .delay(timer.tick_hz() / 60)
             .await
-            .expect("failed to delay using timer")
-    }
-}
+            .expect("failed to delay using timer");
 
-struct ConnectWifiPayload<M: WifiModemPeripheral, Modem: Peripheral<P = M>> {
-    modem: Modem,
-    sys_loop: EspSystemEventLoop,
-    nvs: EspDefaultNvsPartition,
-    timer_service: EspTaskTimerService,
-}
+        let data_status = ads1293.read(DATA_STATUS).expect("fail to read data status");
 
-async fn communication<'d, M: WifiModemPeripheral, Modem: Peripheral<P = M>>(
-    connect_wifi_payload: ConnectWifiPayload<M, Modem>,
-    _data_receiver: Receiver<'d, CriticalSectionRawMutex, Data, 32>,
-) -> anyhow::Result<()> {
-    let settings = SETTINGS.get().expect("the settings are not initialized");
+        let data = ads1293
+            .stream_one()
+            .expect("failed to read data under stream mode");
+        log::trace!("data: {:?}", data);
 
-    let _wifi = connect_wifi(
-        settings,
-        connect_wifi_payload.modem,
-        connect_wifi_payload.sys_loop,
-        connect_wifi_payload.nvs,
-        connect_wifi_payload.timer_service,
-    )
-    .await?;
-
-    let (addr, port) =
-        discover_service(settings.service.broadcast_port).expect("failed to discover the service");
-
-    dbg!(addr, port);
-
-    let water_mark = unsafe { esp_idf_sys::uxTaskGetStackHighWaterMark2(core::ptr::null_mut()) };
-    dbg!(water_mark);
-
-    Ok(())
-}
-
-async fn connect_wifi<'d, M: WifiModemPeripheral>(
-    settings: &Settings,
-    modem: impl Peripheral<P = M> + 'd,
-    sys_loop: EspSystemEventLoop,
-    nvs: EspDefaultNvsPartition,
-    timer_service: EspTaskTimerService,
-) -> anyhow::Result<AsyncWifi<EspWifi<'d>>> {
-    let wifi_config = wifi::Configuration::Client(ClientConfiguration {
-        ssid: settings.wifi.ssid.clone(),
-        bssid: None,
-        auth_method: wifi::AuthMethod::WPA2Personal,
-        password: settings.wifi.password.clone(),
-        channel: None,
-        ..Default::default()
-    });
-
-    let mut wifi = AsyncWifi::wrap(
-        EspWifi::new(modem, sys_loop.clone(), Some(nvs))
-            .expect("failed to create esp-wifi service"),
-        sys_loop,
-        timer_service,
-    )
-    .expect("failed to create async wifi service");
-
-    wifi.set_configuration(&wifi_config)
-        .expect("failed to set wifi configuration");
-
-    wifi.start().await.expect("failed to start the wifi");
-
-    wifi.connect().await.context("failed to connect wifi")?;
-
-    wifi.wait_netif_up()
-        .await
-        .expect("failed to call wait_netif_up on wifi service");
-
-    Ok(wifi)
-}
-
-#[derive(Debug, thiserror::Error)]
-enum ServiceDiscoveryError {
-    #[error("the attempt to deserialize the data received from the service discovery port ({}) has reached its maximum limit.", .0)]
-    DeserializationFailed(u16),
-}
-
-fn discover_service(port: u16) -> Result<(SocketAddr, u16), ServiceDiscoveryError> {
-    log::debug!("Starting to discover the service");
-    let socket = UdpSocket::bind(("0.0.0.0", port)).expect("failed to bind the udp socket");
-    let mut buf = [0; SERVICE_MESSAGE_SERIALIZE_MAX_LEN];
-    let mut deserialize_attempts_count: usize = 0;
-
-    let (service_info, addr) = loop {
-        if deserialize_attempts_count >= 30 {
-            return Err(ServiceDiscoveryError::DeserializationFailed(port));
+        counter += 1;
+        if counter == 300 {
+            counter = 0;
+            log::info!("data status: {:#?}", data_status);
         }
-
-        let (read_size, addr) = socket
-            .recv_from(&mut buf)
-            .expect("failed to recv data from the udp socket");
-
-        let service_info = match ServiceMessage::deserialize_from_json(&buf[..read_size]) {
-            Ok(m) => m,
-            Err(e) => {
-                deserialize_attempts_count += 1;
-                log::warn!("Can't deserialize the received message from the service discovery udp socket. Error: {:#?}", e);
-                continue;
-            }
-        };
-
-        if service_info.service.as_str() == SERVICE_NAME {
-            break (service_info, addr);
-        };
-
-        log::debug!("receive service info: {:#?}", service_info);
-    };
-
-    Ok((addr, service_info.bind_to.port))
+    }
 }
