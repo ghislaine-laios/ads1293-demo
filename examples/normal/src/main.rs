@@ -2,6 +2,7 @@ use ads1293_demo::driver::initialization::Application3Lead;
 use ads1293_demo::driver::initialization::Initializer;
 use ads1293_demo::driver::registers;
 use ads1293_demo::driver::registers::access::ReadFromRegister;
+use ads1293_demo::driver::registers::DataRegister;
 use ads1293_demo::driver::registers::DATA_STATUS;
 use ads1293_demo::driver::ADS1293;
 use anyhow::Context;
@@ -10,6 +11,7 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::channel::Sender;
 use esp_idf_svc::eventloop::EspSystemEventLoop;
+use esp_idf_svc::hal::delay;
 use esp_idf_svc::hal::gpio::OutputPin;
 use esp_idf_svc::hal::gpio::PinDriver;
 use esp_idf_svc::hal::peripheral::Peripheral;
@@ -19,11 +21,13 @@ use esp_idf_svc::hal::spi::SpiDeviceDriver;
 use esp_idf_svc::hal::spi::SpiDriver;
 use esp_idf_svc::hal::spi::SpiDriverConfig;
 use esp_idf_svc::hal::task;
+use esp_idf_svc::hal::task::thread::ThreadSpawnConfiguration;
 use esp_idf_svc::hal::timer::Timer;
 use esp_idf_svc::hal::timer::TimerConfig;
 use esp_idf_svc::hal::timer::TimerDriver;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use esp_idf_svc::timer::EspTaskTimerService;
+use esp_idf_sys::esp_timer_get_time;
 use normal::communication::communication;
 use normal::communication::ConnectWifiPayload;
 use normal::settings::Settings;
@@ -33,8 +37,8 @@ use serde::de;
 static DATA_CHANNEL: embassy_sync::channel::Channel<
     CriticalSectionRawMutex,
     normal_data::Data,
-    32,
-> = Channel::<CriticalSectionRawMutex, Data, 32>::new();
+    256,
+> = Channel::<CriticalSectionRawMutex, Data, 256>::new();
 
 fn main() -> anyhow::Result<()> {
     // It is necessary to call this function once. Otherwise some patches to the runtime
@@ -67,6 +71,14 @@ fn main() -> anyhow::Result<()> {
     let data_sender = DATA_CHANNEL.sender();
     let data_receiver = DATA_CHANNEL.receiver();
 
+    ThreadSpawnConfiguration {
+        pin_to_core: Some(esp_idf_svc::hal::cpu::Core::Core0),
+        priority: 23,
+        ..Default::default()
+    }
+    .set()
+    .unwrap();
+
     let thread_1 = std::thread::Builder::new()
         .name("thread 1".to_owned())
         .stack_size(4096)
@@ -80,6 +92,14 @@ fn main() -> anyhow::Result<()> {
             });
         })
         .context("failed to spawn the thread 1")?;
+
+    ThreadSpawnConfiguration {
+        pin_to_core: Some(esp_idf_svc::hal::cpu::Core::Core1),
+        priority: 23,
+        ..Default::default()
+    }
+    .set()
+    .unwrap();
 
     let _thread_2 = std::thread::Builder::new()
         .name("thread 2".to_owned())
@@ -137,7 +157,7 @@ async fn data<T: Timer>(
     spi: SpiDriver<'_>,
     cs: impl OutputPin,
     timer: impl Peripheral<P = T>,
-    data_sender: Sender<'_, CriticalSectionRawMutex, Data, 32>,
+    data_sender: Sender<'_, CriticalSectionRawMutex, Data, 256>,
 ) {
     let mut config = spi::SpiConfig::default();
     config.baudrate = Hertz(2_000_000);
@@ -162,6 +182,7 @@ async fn data<T: Timer>(
     let mut timer = TimerDriver::new(
         timer,
         &TimerConfig {
+            divider: 40000,
             ..Default::default()
         },
     )
@@ -172,24 +193,52 @@ async fn data<T: Timer>(
         .expect("fail to read loop back mode config");
     log::info!("loop_back_mode_config: {:#?}", loop_back_mode_config);
 
-    let mut counter = 0;
+    let mut id = 0;
+    let mut perf_counter = 0;
+    let mut fail_counter = 0;
+    let mut start_time = unsafe { esp_timer_get_time() };
+    let tick_hz = timer.tick_hz();
+    let delay_tick = tick_hz / 63;
     loop {
+        perf_counter += 1;
         timer
-            .delay(timer.tick_hz() / 60)
+            .delay(delay_tick)
             .await
             .expect("failed to delay using timer");
-
         let data_status = ads1293.read(DATA_STATUS).expect("fail to read data status");
 
-        let data = ads1293
+        let data_vec = ads1293
             .stream_one()
             .expect("failed to read data under stream mode");
-        log::trace!("data: {:?}", data);
+        log::trace!("data: {:?}", data_vec);
 
-        counter += 1;
-        if counter == 300 {
-            counter = 0;
-            log::info!("data status: {:#?}", data_status);
+        for data in data_vec {
+            let DataRegister::DATA_CH1_ECG(data) = data else {
+                continue;
+            };
+
+            if let Err(_) = data_sender.try_send(Data {
+                id,
+                value: data.into(),
+            }) {
+                fail_counter += 1;
+                if fail_counter == 60 {
+                    fail_counter = 0;
+                    log::warn!("the data channel is full. lots of data is dropped.");
+                }
+            }
+
+            break;
+        }
+
+        id += 1;
+
+        if perf_counter == 600 {
+            let end_time = unsafe { esp_timer_get_time() };
+            let span = end_time - start_time;
+            start_time = end_time;
+            log::info!("last 600 frame: {} ms", span / 1000);
+            perf_counter = 0;
         }
     }
 }

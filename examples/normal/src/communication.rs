@@ -6,6 +6,7 @@ use embassy_futures::select;
 use embassy_futures::select::Either;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Receiver;
+use embassy_sync::channel::TrySendError;
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::modem::WifiModemPeripheral;
 use esp_idf_svc::hal::peripheral::Peripheral;
@@ -38,7 +39,7 @@ pub struct ConnectWifiPayload<M: WifiModemPeripheral, Modem: Peripheral<P = M>> 
 
 pub async fn communication<'d, M: WifiModemPeripheral, Modem: Peripheral<P = M>>(
     connect_wifi_payload: ConnectWifiPayload<M, Modem>,
-    data_receiver: Receiver<'d, CriticalSectionRawMutex, Data, 32>,
+    data_receiver: Receiver<'d, CriticalSectionRawMutex, Data, 256>,
 ) -> anyhow::Result<()> {
     let settings = SETTINGS.get().expect("the settings are not initialized");
 
@@ -154,7 +155,7 @@ static WS_CHANNEL: embassy_sync::channel::Channel<
 
 async fn serve<'d>(
     broadcast_port: u16,
-    data_receiver: Receiver<'d, CriticalSectionRawMutex, Data, 32>,
+    data_receiver: Receiver<'d, CriticalSectionRawMutex, Data, 256>,
 ) -> Result<(), ServeError> {
     let (addr, port) = discover_service(broadcast_port).expect("failed to discover the service");
 
@@ -172,7 +173,8 @@ async fn serve<'d>(
         &url,
         &EspWebSocketClientConfig {
             ping_interval_sec: Duration::from_secs(1),
-            reconnect_timeout_ms: Duration::from_millis(1000),
+            reconnect_timeout_ms: Duration::from_millis(200),
+            network_timeout_ms: Duration::from_millis(200),
             ..Default::default()
         },
         Duration::from_secs(10),
@@ -206,13 +208,19 @@ async fn serve<'d>(
     .map_err(ServeError::ConnectFailed)?;
 
     let mut last_data = None;
+    let mut counter = 0;
     loop {
         let result = select::select(
             async {
                 let msg = ws_receiver.receive().await;
-                ws_client
-                    .send(msg.0, msg.1.as_ref())
-                    .map_err(ServeError::SendFailed)?;
+                counter += 1;
+                if counter >= 60 {
+                    log::info!("msg: {:?}", msg);
+                    counter = 0;
+                }
+                // ws_client
+                //     .send(msg.0, msg.1.as_ref())
+                //     .map_err(ServeError::SendFailed)?;
 
                 Ok::<(), ServeError>(())
             },
@@ -220,7 +228,10 @@ async fn serve<'d>(
                 // For cancellation safety
                 if let Some(data) = &last_data {
                     let raw = serde_json::to_vec(data).expect("failed to serialize the data");
-                    ws_sender.send((FrameType::Text(false), raw)).await;
+                    if let Err(TrySendError::Full(r)) = ws_sender.try_send((FrameType::Text(false), raw)) {
+                        log::warn!("the ws_channel is full. unexpected.");
+                        ws_sender.send(r).await;
+                    }
                     last_data = None;
                 }
                 last_data = Some(data_receiver.receive().await);
@@ -232,9 +243,9 @@ async fn serve<'d>(
             result?;
         }
 
-        let water_mark =
-            unsafe { esp_idf_sys::uxTaskGetStackHighWaterMark2(core::ptr::null_mut()) };
-        dbg!(water_mark);
+        // let water_mark =
+        //     unsafe { esp_idf_sys::uxTaskGetStackHighWaterMark2(core::ptr::null_mut()) };
+        // dbg!(water_mark);
     }
 
     Ok(())
