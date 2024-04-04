@@ -1,26 +1,14 @@
 use crate::settings::Settings;
-use crate::settings::SETTINGS;
-use ads1293_demo::driver::registers::data;
 use anyhow::Context;
-use embassy_futures::select;
-use embassy_futures::select::Either;
-use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_sync::channel::Receiver;
-use embassy_sync::channel::TrySendError;
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::modem::WifiModemPeripheral;
 use esp_idf_svc::hal::peripheral::Peripheral;
-use esp_idf_svc::io::EspIOError;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use esp_idf_svc::timer::EspTaskTimerService;
 use esp_idf_svc::wifi;
 use esp_idf_svc::wifi::AsyncWifi;
 use esp_idf_svc::wifi::ClientConfiguration;
 use esp_idf_svc::wifi::EspWifi;
-use esp_idf_svc::ws::client::EspWebSocketClient;
-use esp_idf_svc::ws::client::EspWebSocketClientConfig;
-use esp_idf_svc::ws::FrameType;
-use esp_idf_sys::EspError;
 use futures_util::SinkExt;
 use normal_data::Data;
 use normal_data::ServiceMessage;
@@ -30,7 +18,6 @@ use normal_data::SERVICE_NAME;
 use std::net::SocketAddr;
 use std::net::SocketAddrV4;
 use std::net::UdpSocket;
-use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
@@ -56,7 +43,7 @@ pub async fn communication(
             .unwrap();
         socket.feed(Message::text(str)).await.unwrap();
 
-        count+=1;
+        count += 1;
         if count == 30 {
             log::info!("flush! last data id: {}", data.id);
             socket.flush().await.unwrap();

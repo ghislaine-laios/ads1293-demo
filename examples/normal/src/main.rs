@@ -1,6 +1,3 @@
-use std::net::SocketAddr;
-use std::time::Duration;
-
 use ads1293_demo::driver::initialization::Application3Lead;
 use ads1293_demo::driver::initialization::Initializer;
 use ads1293_demo::driver::registers;
@@ -8,27 +5,19 @@ use ads1293_demo::driver::registers::access::ReadFromRegister;
 use ads1293_demo::driver::registers::DataRegister;
 use ads1293_demo::driver::registers::DATA_STATUS;
 use ads1293_demo::driver::ADS1293;
-use anyhow::Context;
 use embassy_futures::select::select;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
-use embassy_sync::channel::Sender;
 use embedded_hal::spi::SpiDevice;
 use esp_idf_svc::eventloop::EspSystemEventLoop;
-use esp_idf_svc::hal::delay;
 use esp_idf_svc::hal::gpio::OutputPin;
 use esp_idf_svc::hal::gpio::PinDriver;
-use esp_idf_svc::hal::peripheral::Peripheral;
 use esp_idf_svc::hal::prelude::*;
 use esp_idf_svc::hal::spi;
 use esp_idf_svc::hal::spi::SpiDeviceDriver;
 use esp_idf_svc::hal::spi::SpiDriver;
 use esp_idf_svc::hal::spi::SpiDriverConfig;
 use esp_idf_svc::hal::task;
-use esp_idf_svc::hal::task::thread::ThreadSpawnConfiguration;
-use esp_idf_svc::hal::timer::Timer;
-use esp_idf_svc::hal::timer::TimerConfig;
-use esp_idf_svc::hal::timer::TimerDriver;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use esp_idf_svc::timer::EspTaskTimerService;
 use esp_idf_sys::esp;
@@ -41,7 +30,9 @@ use normal::communication::setup_websocket;
 use normal::communication::ConnectWifiPayload;
 use normal::settings::Settings;
 use normal_data::Data;
-use serde::de;
+use std::net::SocketAddr;
+use std::time::Duration;
+
 use tokio::sync::mpsc::error::TrySendError;
 
 static DATA_CHANNEL: embassy_sync::channel::Channel<
@@ -81,8 +72,8 @@ fn main() -> anyhow::Result<()> {
 
     let ads1293_cs = peripherals.pins.gpio15;
 
-    let data_sender = DATA_CHANNEL.sender();
-    let data_receiver = DATA_CHANNEL.receiver();
+    let _data_sender = DATA_CHANNEL.sender();
+    let _data_receiver = DATA_CHANNEL.receiver();
 
     let connect_wifi_payload = ConnectWifiPayload {
         modem: peripherals.modem,
@@ -119,6 +110,7 @@ fn main() -> anyhow::Result<()> {
         .build()
         .expect("failed to setup tokio runtime")
         .block_on(async move {
+            // We like blinking!
             tokio::spawn(led(led_pin));
 
             let mut socket = setup_websocket(addr).await;
@@ -198,7 +190,7 @@ async fn data(device: impl SpiDevice, data_sender: tokio::sync::mpsc::Sender<Dat
         perf_counter += 1;
         sleep_deadline = sleep_deadline.checked_add(frame_duration).unwrap();
 
-        let data_status = ads1293.read(DATA_STATUS).expect("fail to read data status");
+        let _data_status = ads1293.read(DATA_STATUS).expect("fail to read data status");
 
         let data_vec = ads1293
             .stream_one()
@@ -215,9 +207,9 @@ async fn data(device: impl SpiDevice, data_sender: tokio::sync::mpsc::Sender<Dat
                 value: data.into(),
             }) {
                 match e {
-                    // I drop the data directly to ensure that 
+                    // I drop the data directly to ensure that
                     // the data's ID remains reliable for timing purposes.
-                    TrySendError::Full(data) => {
+                    TrySendError::Full(_data) => {
                         if fail_counter == 60 {
                             log::warn!("the data channel is full. the data will be dropped.");
                             fail_counter = 0;
