@@ -1,14 +1,9 @@
-use std::net::UdpSocket;
-
-use crate::settings::Settings;
 use ads1293_demo::driver::initialization::Application3Lead;
 use ads1293_demo::driver::initialization::Initializer;
 use ads1293_demo::driver::registers;
 use ads1293_demo::driver::registers::access::ReadFromRegister;
 use ads1293_demo::driver::ADS1293;
 use anyhow::Context;
-use embassy_futures::join::join;
-use embassy_futures::join::join3;
 use embassy_futures::select::select;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
@@ -33,11 +28,14 @@ use esp_idf_svc::wifi;
 use esp_idf_svc::wifi::AsyncWifi;
 use esp_idf_svc::wifi::ClientConfiguration;
 use esp_idf_svc::wifi::EspWifi;
-use esp_idf_svc::ws::client::EspWebSocketClient;
+use normal::settings::Settings;
+use normal::settings::SETTINGS;
 use normal_data::Data;
-use settings::SETTINGS;
-
-pub mod settings;
+use normal_data::ServiceMessage;
+use normal_data::SERVICE_MESSAGE_SERIALIZE_MAX_LEN;
+use normal_data::SERVICE_NAME;
+use std::net::SocketAddr;
+use std::net::UdpSocket;
 
 static DATA_CHANNEL: embassy_sync::channel::Channel<
     CriticalSectionRawMutex,
@@ -73,13 +71,12 @@ fn main() -> anyhow::Result<()> {
 
     let ads1293_cs = peripherals.pins.gpio15;
 
-    let data_sender = DATA_CHANNEL.sender();
+    let _data_sender = DATA_CHANNEL.sender();
     let data_receiver = DATA_CHANNEL.receiver();
 
-    let stack_size = 8192;
     let thread_1 = std::thread::Builder::new()
         .name("thread 1".to_owned())
-        .stack_size(stack_size)
+        .stack_size(4096)
         .spawn(move || {
             task::block_on(async move {
                 select(led(led_pin, timer00), data(spi, ads1293_cs, timer01)).await;
@@ -87,9 +84,9 @@ fn main() -> anyhow::Result<()> {
         })
         .context("failed to spawn the thread 1")?;
 
-    let thread_2 = std::thread::Builder::new()
+    let _thread_2 = std::thread::Builder::new()
         .name("thread 2".to_owned())
-        .stack_size(stack_size)
+        .stack_size(8192)
         .spawn(move || {
             task::block_on(async move {
                 let connect_wifi_payload = ConnectWifiPayload {
@@ -180,9 +177,12 @@ struct ConnectWifiPayload<M: WifiModemPeripheral, Modem: Peripheral<P = M>> {
 
 async fn communication<'d, M: WifiModemPeripheral, Modem: Peripheral<P = M>>(
     connect_wifi_payload: ConnectWifiPayload<M, Modem>,
-    data_receiver: Receiver<'d, CriticalSectionRawMutex, Data, 32>,
+    _data_receiver: Receiver<'d, CriticalSectionRawMutex, Data, 32>,
 ) -> anyhow::Result<()> {
-    let wifi = connect_wifi(
+    let settings = SETTINGS.get().expect("the settings are not initialized");
+
+    let _wifi = connect_wifi(
+        settings,
         connect_wifi_payload.modem,
         connect_wifi_payload.sys_loop,
         connect_wifi_payload.nvs,
@@ -190,21 +190,25 @@ async fn communication<'d, M: WifiModemPeripheral, Modem: Peripheral<P = M>>(
     )
     .await?;
 
-    // let mut client = EspWebSocketClient::new(uri, config, timeout, callback)
+    let (addr, port) =
+        discover_service(settings.service.broadcast_port).expect("failed to discover the service");
 
-    // let (socket, resp) = connect_async(Url::parse(format!()))
+    dbg!(addr, port);
+
+    let water_mark = unsafe { esp_idf_sys::uxTaskGetStackHighWaterMark2(core::ptr::null_mut()) };
+    dbg!(water_mark);
 
     Ok(())
 }
 
 async fn connect_wifi<'d, M: WifiModemPeripheral>(
+    settings: &Settings,
     modem: impl Peripheral<P = M> + 'd,
     sys_loop: EspSystemEventLoop,
     nvs: EspDefaultNvsPartition,
     timer_service: EspTaskTimerService,
 ) -> anyhow::Result<AsyncWifi<EspWifi<'d>>> {
-    let settings = SETTINGS.get().expect("the settings are not initialized");
-    let wifi_configuration = wifi::Configuration::Client(ClientConfiguration {
+    let wifi_config = wifi::Configuration::Client(ClientConfiguration {
         ssid: settings.wifi.ssid.clone(),
         bssid: None,
         auth_method: wifi::AuthMethod::WPA2Personal,
@@ -221,7 +225,7 @@ async fn connect_wifi<'d, M: WifiModemPeripheral>(
     )
     .expect("failed to create async wifi service");
 
-    wifi.set_configuration(&wifi_configuration)
+    wifi.set_configuration(&wifi_config)
         .expect("failed to set wifi configuration");
 
     wifi.start().await.expect("failed to start the wifi");
@@ -235,7 +239,42 @@ async fn connect_wifi<'d, M: WifiModemPeripheral>(
     Ok(wifi)
 }
 
-fn discover_service(port: u16) {
+#[derive(Debug, thiserror::Error)]
+enum ServiceDiscoveryError {
+    #[error("the attempt to deserialize the data received from the service discovery port ({}) has reached its maximum limit.", .0)]
+    DeserializationFailed(u16),
+}
+
+fn discover_service(port: u16) -> Result<(SocketAddr, u16), ServiceDiscoveryError> {
+    log::debug!("Starting to discover the service");
     let socket = UdpSocket::bind(("0.0.0.0", port)).expect("failed to bind the udp socket");
-    socket.recv_from(buf)
+    let mut buf = [0; SERVICE_MESSAGE_SERIALIZE_MAX_LEN];
+    let mut deserialize_attempts_count: usize = 0;
+
+    let (service_info, addr) = loop {
+        if deserialize_attempts_count >= 30 {
+            return Err(ServiceDiscoveryError::DeserializationFailed(port));
+        }
+
+        let (read_size, addr) = socket
+            .recv_from(&mut buf)
+            .expect("failed to recv data from the udp socket");
+
+        let service_info = match ServiceMessage::deserialize_from_json(&buf[..read_size]) {
+            Ok(m) => m,
+            Err(e) => {
+                deserialize_attempts_count += 1;
+                log::warn!("Can't deserialize the received message from the service discovery udp socket. Error: {:#?}", e);
+                continue;
+            }
+        };
+
+        if service_info.service.as_str() == SERVICE_NAME {
+            break (service_info, addr);
+        };
+
+        log::debug!("receive service info: {:#?}", service_info);
+    };
+
+    Ok((addr, service_info.bind_to.port))
 }

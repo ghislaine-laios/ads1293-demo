@@ -5,21 +5,15 @@ use crate::{
 };
 use anyhow::Context;
 use async_std::net::UdpSocket;
+pub use normal_data::ServiceMessage as Message;
+pub use normal_data::SERVICE_NAME;
 use serde::{Deserialize, Serialize};
 use tokio::select;
-
-const SERVICE_NAME: &'static str = "ADS1293-DEMO-NORMAL-SERVICE";
 
 #[derive(Debug)]
 pub enum Status {
     Activated,
     Freezed,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Message {
-    pub service: String,
-    pub bind_to: settings::BindTo,
 }
 
 #[derive(Debug)]
@@ -35,7 +29,7 @@ pub struct ServiceBroadcaster {
 
 impl ServiceBroadcaster {
     pub async fn new(
-        service_bind_to: settings::BindTo,
+        service_bind_to: normal_data::BindTo,
         broadcast_info: BroadcastInfo,
     ) -> anyhow::Result<Self> {
         let message = Message {
@@ -45,7 +39,7 @@ impl ServiceBroadcaster {
 
         let raw_message = serde_json::to_vec(&message)?;
 
-        let bind_to = (message.bind_to.ip.as_str(), message.bind_to.port);
+        let bind_to = (message.bind_to.ip.as_str(), 0);
         let socket = UdpSocket::bind(bind_to).await?;
         socket.set_broadcast(true)?;
 
@@ -197,14 +191,18 @@ pub(super) mod handlers {
 
         async fn handle(&mut self, _action: actions::Broadcast) -> anyhow::Result<()> {
             if !matches!(self.status, Status::Activated) {
-                log::debug!("{:?}", self.status);
+                log::debug!("status: {:?}", self.status);
                 return Ok(());
             }
+
+            let dst = (self.broadcast_info.ip.as_str(), self.broadcast_info.port);
+
+            log::debug!("send-to: {:?}", dst);
 
             self.socket
                 .send_to(
                     &self.raw_message,
-                    (self.broadcast_info.ip.as_str(), self.broadcast_info.port),
+                    dst,
                 )
                 .await?;
             Ok(())

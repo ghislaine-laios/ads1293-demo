@@ -1,10 +1,5 @@
+use normal_data::BindTo;
 use serde::{Deserialize, Serialize};
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct BindTo {
-    pub ip: String,
-    pub port: u16,
-}
 
 #[derive(Deserialize, Clone, Debug)]
 pub struct BroadcastInfo {

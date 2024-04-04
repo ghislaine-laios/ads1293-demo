@@ -10,8 +10,14 @@ pub struct Wifi {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct Service {
+    pub broadcast_port: u16,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct Settings {
     pub wifi: Wifi,
+    pub service: Service,
 }
 
 impl Settings {
