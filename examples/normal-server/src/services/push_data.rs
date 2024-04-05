@@ -2,6 +2,7 @@ use crate::actors::{
     data_processor::DataProcessor, service_broadcast_manager::LaunchedServiceBroadcastManager,
 };
 use actix_web::{get, web, Error, HttpRequest, HttpResponse};
+use sea_orm::DatabaseConnection;
 use std::sync::Arc;
 
 /// The device push data to this endpoint using websocket.
@@ -10,12 +11,17 @@ pub async fn push_data(
     req: HttpRequest,
     stream: web::Payload,
     launched_service_broadcast_manager: web::Data<LaunchedServiceBroadcastManager>,
+    db_coon: web::Data<DatabaseConnection>,
 ) -> Result<HttpResponse, Error> {
     let launched_service_broadcast_manager =
         Arc::unwrap_or_clone(launched_service_broadcast_manager.into_inner());
 
     let mut resp = actix_web_actors::ws::handshake(&req)?;
-    let (data_processor, stream) = DataProcessor::new(stream, launched_service_broadcast_manager);
+    let (data_processor, stream) = DataProcessor::new(
+        stream,
+        launched_service_broadcast_manager,
+        Arc::unwrap_or_clone(db_coon.into_inner()),
+    );
     let _ = data_processor.launch();
     Ok(resp.streaming(stream))
 }

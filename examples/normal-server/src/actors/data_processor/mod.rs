@@ -1,19 +1,35 @@
-use self::{interval::CheckAlive, streams::DataComing};
+use self::{
+    interval::CheckAlive,
+    mutation::Mutation,
+    saver::{DataSaver, LaunchedDataSaver},
+    streams::DataComing,
+};
 use super::service_broadcast_manager::LaunchedServiceBroadcastManager;
-use crate::actors::Handler;
+use crate::{
+    actors::Handler,
+    entities::{
+        data,
+        data_transaction::{self, ActiveModel},
+    },
+};
 use actix_http::ws::{self, ProtocolError};
 use actix_web::{
     error::PayloadError,
     web::{self, Bytes, BytesMut},
 };
 use anyhow::Context;
+use chrono::{DateTime, Local};
 use futures::Stream;
+use sea_orm::{DatabaseConnection, Set};
 use std::{sync::Arc, time::Duration};
 use tokio::select;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::codec::Encoder;
 
 pub use normal_data::Data;
+
+mod mutation;
+mod saver;
 
 #[derive(Clone, Copy, Debug)]
 pub enum ConnectionStatus {
@@ -23,6 +39,7 @@ pub enum ConnectionStatus {
     Closed,
 }
 
+// TODO: Add builder to remove options.
 pub struct DataProcessor {
     buf: BytesMut,
     codec: ws::Codec,
@@ -32,6 +49,10 @@ pub struct DataProcessor {
     launched_service_broadcast_manager: LaunchedServiceBroadcastManager,
     alive_checker: Option<interval::CheckAlive>,
     last_pong: tokio::time::Instant,
+    mutation: Mutation,
+    data_transaction: Option<data_transaction::Model>,
+    data_saver: Option<DataSaver>,
+    launched_data_saver: Option<LaunchedDataSaver>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -54,6 +75,10 @@ pub enum DataProcessingError {
     NotSupportedFrame(String),
     #[error("the given payload throw an error")]
     PayloadError(Arc<PayloadError>),
+    #[error("the data value {} is outranged", .0)]
+    DataOutrange(u32),
+    #[error("failed to save data using data saver")]
+    SaveDataFailed,
     #[error("an unknown internal bug occurred")]
     InternalBug(Arc<anyhow::Error>),
 }
@@ -62,6 +87,7 @@ impl DataProcessor {
     pub fn new(
         payload: web::Payload,
         launched_service_broadcast_manager: LaunchedServiceBroadcastManager,
+        db_coon: DatabaseConnection,
     ) -> (Self, impl Stream<Item = Result<Bytes, DataProcessingError>>) {
         let (tx, rx) = tokio::sync::mpsc::channel(8);
 
@@ -75,6 +101,10 @@ impl DataProcessor {
                 launched_service_broadcast_manager,
                 alive_checker: Some(CheckAlive::new(Duration::from_secs(15))),
                 last_pong: tokio::time::Instant::now(),
+                mutation: Mutation(db_coon.clone()),
+                data_transaction: None,
+                data_saver: Some(DataSaver::new(db_coon)),
+                launched_data_saver: None,
             },
             ReceiverStream::new(rx),
         )
@@ -107,6 +137,17 @@ impl DataProcessor {
             .context("failed to register this connection to the manager due to closed channel")
             .map_err(|e| DataProcessingError::InternalBug(Arc::new(e)))
             .err();
+
+        if err.is_none() {
+            let data_saver = self.data_saver.take().unwrap();
+            let (launched, _) = data_saver.launch();
+            self.launched_data_saver = Some(launched);
+        }
+
+        if err.is_none() {
+            err = self.started().await.err();
+        }
+
         while err.is_none() {
             alive_checker.update_last_pong(self.last_pong);
 
@@ -169,8 +210,22 @@ impl DataProcessor {
         }
     }
 
+    async fn started(&mut self) -> Result<(), DataProcessingError> {
+        self.data_transaction = Some(
+            self.mutation
+                .insert_data_transaction(ActiveModel {
+                    start_time: Set(chrono::Local::now().naive_local()),
+                    ..Default::default()
+                })
+                .await
+                .map_err(|e| DataProcessingError::InternalBug(Arc::new(e.into())))?,
+        );
+
+        Ok(())
+    }
+
     async fn process_action(&mut self, action: actions::Action) -> Result<(), DataProcessingError> {
-        log::debug!("action: {:?}", &action);
+        log::trace!("action: {:?}", &action);
 
         let add_raw = match action {
             actions::Action::AddRaw(add_raw) => add_raw,
@@ -198,7 +253,7 @@ pub struct ErrorNotificationFailed;
 
 impl DataProcessor {
     async fn handle_frame(&mut self, frame: ws::Frame) -> Result<(), DataProcessingError> {
-        log::debug!("frame: {:?}", frame);
+        log::trace!("frame: {:?}", frame);
         async {
             match self.status {
                 ConnectionStatus::Activated => {}
@@ -225,7 +280,7 @@ impl DataProcessor {
                 actix_http::ws::Frame::Text(text) => {
                     let data = serde_json::from_slice(&text[..])
                         .map_err(|e| DataProcessingError::DataDecodeFailed(Arc::new(e)))?;
-                    self.process_data(data).await;
+                    self.process_data(data).await?;
                     Ok(())
                 }
                 actix_http::ws::Frame::Binary(_) => {
@@ -312,15 +367,41 @@ impl DataProcessor {
             .await
             .map_err(|_| ErrorNotificationFailed)
     }
+}
 
-    async fn process_data(&mut self, data: Data) {
-        log::debug!("data: {:?}", data);
+impl DataProcessor {
+    async fn process_data(&mut self, data: Data) -> Result<(), DataProcessingError> {
+        log::trace!("data: {:?}", data);
+
+        let saver = self.launched_data_saver.as_ref().unwrap();
+        saver
+            .save_timeout(
+                data::ActiveModel {
+                    data_transaction_id: Set(self.data_transaction.as_ref().unwrap().id),
+                    id: Set(data.id.into()),
+                    value: Set(data
+                        .value
+                        .try_into()
+                        .map_err(|_| DataProcessingError::DataOutrange(data.value))?),
+                },
+                Duration::from_millis(200),
+            )
+            .await
+            .map_err(|_| DataProcessingError::SaveDataFailed)?;
+
+        Ok(())
     }
 }
 
 #[derive(Clone)]
 pub struct LaunchedDataProcessor {
     pub tx: tokio::sync::mpsc::Sender<actions::Action>,
+}
+
+impl Drop for DataProcessor {
+    fn drop(&mut self) {
+        log::debug!("A data processor is dropped at {:?}.", Local::now());
+    }
 }
 
 pub(super) mod actions {

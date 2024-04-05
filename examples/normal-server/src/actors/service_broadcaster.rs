@@ -122,7 +122,7 @@ impl ServiceBroadcaster {
     ) -> Result<(), ProcessActionError> {
         use ProcessActionError as Error;
 
-        log::debug!("{:?}", &action);
+        log::debug!("action: {:?}", &action);
 
         let Some(action) = action else {
             return Err(Error::None);
