@@ -8,7 +8,6 @@ use actix_web::{
 };
 use anyhow::Context;
 use futures::Stream;
-use serde::{Deserialize, Serialize};
 use std::{sync::Arc, time::Duration};
 use tokio::select;
 use tokio_stream::wrappers::ReceiverStream;
@@ -239,9 +238,7 @@ impl DataProcessor {
                     .send_to_peer(ws::Message::Pong(msg))
                     .await
                     .map_err(DataProcessingError::SendToPeerError),
-                actix_http::ws::Frame::Pong(_) => {
-                    Ok(())
-                }
+                actix_http::ws::Frame::Pong(_) => Ok(()),
                 actix_http::ws::Frame::Close(_) => {
                     let r = match self.status {
                         ConnectionStatus::Activated => {

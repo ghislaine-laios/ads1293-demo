@@ -1,5 +1,5 @@
 use normal_data::BindTo;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 #[derive(Deserialize, Clone, Debug)]
 pub struct BroadcastInfo {

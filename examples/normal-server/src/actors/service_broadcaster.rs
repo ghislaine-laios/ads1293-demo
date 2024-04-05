@@ -1,13 +1,9 @@
 use self::{actions::Action, interval::ServiceBroadcast};
-use crate::{
-    actors::Handler,
-    settings::{self, BroadcastInfo},
-};
+use crate::{actors::Handler, settings::BroadcastInfo};
 use anyhow::Context;
 use async_std::net::UdpSocket;
 pub use normal_data::ServiceMessage as Message;
 pub use normal_data::SERVICE_NAME;
-use serde::{Deserialize, Serialize};
 use tokio::select;
 
 #[derive(Debug)]
@@ -199,12 +195,7 @@ pub(super) mod handlers {
 
             log::debug!("send-to: {:?}", dst);
 
-            self.socket
-                .send_to(
-                    &self.raw_message,
-                    dst,
-                )
-                .await?;
+            self.socket.send_to(&self.raw_message, dst).await?;
             Ok(())
         }
     }
