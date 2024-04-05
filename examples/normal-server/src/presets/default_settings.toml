@@ -1,6 +1,10 @@
 [bind_to]
 ip = "0.0.0.0"
 port = 20271
+
 [broadcast]
 ip = "255.255.255.255"
 port = 20272
+
+[database]
+url = "postgresql://localhost:20273/example?user=postgres&password=example"

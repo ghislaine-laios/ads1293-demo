@@ -1,0 +1,11 @@
+name: exp-ads1293-normal-server
+services:
+  db:
+    image: postgres
+    restart: always
+    shm_size: 128mb
+    environment:
+      POSTGRES_PASSWORD: example
+      POSTGRES_DB: example
+    ports:
+      - 127.0.0.1:20273:5432
