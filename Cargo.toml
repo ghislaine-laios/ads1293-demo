@@ -1,6 +1,10 @@
 [workspace]
-members = [ "examples/normal-data", "examples/normal-server","packages/proc-macros", "packages/proc-traits"]
-exclude = ["examples/normal"]
+members = [
+    "examples/normal-data",
+    "packages/proc-macros",
+    "packages/proc-traits",
+]
+exclude = ["examples/normal", "examples/normal-server"]
 
 [package]
 name = "ads1293-demo"
@@ -8,7 +12,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
- bitfield = "0.14.0"
+bitfield = "0.14.0"
 byteorder = "1.5.0"
 embedded-hal = "1.0.0"
 enum_variant_type = "0.3.1"

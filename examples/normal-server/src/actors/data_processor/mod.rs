@@ -23,15 +23,13 @@ use chrono::Local;
 use futures::Stream;
 use sea_orm::{DatabaseConnection, DbErr, Set};
 use std::{sync::Arc, time::Duration};
-use tokio::{select, sync::mpsc};
+use tokio::{join, select, sync::mpsc};
 use tokio_util::codec::Encoder;
 
 pub use normal_data::Data;
 
 mod mutation;
 mod saver;
-
-type WebsocketDataSender = tokio::sync::mpsc::Sender<Result<Bytes, DataProcessingError>>;
 
 #[derive(Clone, Copy, Debug)]
 pub enum ConnectionStatus {
@@ -117,7 +115,7 @@ impl DataProcessorBuilder {
 pub struct DataProcessor {
     decode_buf: BytesMut,
     codec: ws::Codec,
-    ws_sender: tokio::sync::mpsc::Sender<Bytes>,
+    ws_sender: mpsc::Sender<Bytes>,
     status: ConnectionStatus,
     launched_service_broadcast_manager: LaunchedServiceBroadcastManager,
     last_pong: actix_rt::time::Instant,
@@ -234,6 +232,8 @@ impl DataProcessor {
         if let Some(err) = err {
             return Err(err);
         }
+
+        join!(async {1}, async {2});
 
         Ok(())
     }
