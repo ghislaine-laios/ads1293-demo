@@ -5,7 +5,7 @@ use self::{
 use super::{
     interval::watch_dog::{self, TimeoutHandle, WatchDog},
     service_broadcast_manager::LaunchedServiceBroadcastManager,
-    websocket::FeedRawDataError,
+    websocket::{ws_output_stream, FeedRawDataError},
 };
 use crate::{
     actors::{websocket::feed_raw_data, Handler},
@@ -20,9 +20,7 @@ use actix_web::{
     web::{self, Bytes, BytesMut},
 };
 use anyhow::Context;
-use async_stream::stream;
 use chrono::Local;
-use core::time;
 use futures::Stream;
 use sea_orm::{DatabaseConnection, DbErr, Set};
 use std::{sync::Arc, time::Duration};
@@ -66,12 +64,12 @@ impl DataProcessorBuilder {
 
         let (launched_watch_dog, timeout_handle) = self.watch_dog.launch();
 
-        let (tx, mut rx) = mpsc::channel(8);
+        let (ws_sender, ws_receiver) = mpsc::channel(8);
 
         let data_processor = DataProcessor {
             decode_buf: BytesMut::new(),
             codec: ws::Codec::new(),
-            ws_sender: tx,
+            ws_sender,
             status: ConnectionStatus::Activated,
             launched_service_broadcast_manager: self.launched_service_broadcast_manager,
             watch_dog: launched_watch_dog,
@@ -79,41 +77,21 @@ impl DataProcessorBuilder {
             launched_data_saver,
         };
 
-        let mut data_processor_join_handle =
+        let data_processor_join_handle =
             data_processor.launch(self.raw_data_stream, timeout_handle);
 
-        let ws_stream = stream! {
-            loop {
-                tokio::select! {
-                    bytes = rx.recv() => {
-                        match bytes {
-                            Some(bytes) => yield(Ok(bytes)),
-                            _ => break
-                        }
-                    },
-                    join_result = &mut data_processor_join_handle => {
-                        let task_result = match join_result {
-                            Ok(r) => r,
-                            Err(e) => {
-                                log::error!("A data processor task panicked: {:#?}", e);
-                                yield(Err(DataProcessingError::InternalBug(Arc::new(e.into()))));
-                                break
-                            }
-                        };
-
-                        if let Err(e) = task_result {
-                            log::error!(
-                                "A data processor task returned with error: {:#?}", e);
-                                yield(Err(e))
-                        }
-
-                        break
-                    }
-                };
-            }
-        };
-
-        Ok(ws_stream)
+        Ok(ws_output_stream(
+            ws_receiver,
+            data_processor_join_handle,
+            |e| {
+                log::error!("A data processor task panicked: {:#?}", e);
+                DataProcessingError::InternalBug(Arc::new(e.into()))
+            },
+            Some(|e| {
+                log::error!("A data processor task returned with error: {:#?}", e);
+                e
+            }),
+        ))
     }
 }
 

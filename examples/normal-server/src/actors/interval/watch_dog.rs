@@ -41,12 +41,7 @@ impl WatchDog {
         (duration <= self.timeout, now)
     }
 
-    pub fn launch(
-        self,
-    ) -> (
-        LaunchedWatchDog,
-        TimeoutHandle,
-    ) {
+    pub fn launch(self) -> (LaunchedWatchDog, TimeoutHandle) {
         let (launched, action_receiver) = LaunchedWatchDog::new();
         (
             launched,
