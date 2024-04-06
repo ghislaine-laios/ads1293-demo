@@ -106,14 +106,6 @@ pub struct DataProcessor {
     launched_data_saver: LaunchedDataSaver,
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum GenericDataProcessingError {
-    #[error("an informed data processing error occurred")]
-    Informed(DataProcessingError),
-    #[error("an uninformed data processing error occurred")]
-    Uninformed(DataProcessingError),
-}
-
 #[derive(Debug, thiserror::Error, Clone)]
 pub enum DataProcessingError {
     #[error("failed to feed raw data")]
@@ -126,8 +118,6 @@ pub enum DataProcessingError {
     SendToPeerError(SendToPeerError),
     #[error("the incoming websocket frame is not supported")]
     NotSupportedFrame(String),
-    #[error("the given payload throw an error")]
-    PayloadError(Arc<PayloadError>),
     #[error("the data value {} is outranged", .0)]
     DataOutrange(u32),
     #[error("failed to save data using data saver")]
