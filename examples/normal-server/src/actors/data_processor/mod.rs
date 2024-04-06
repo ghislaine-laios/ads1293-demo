@@ -216,8 +216,6 @@ impl DataProcessor {
             return Err(err);
         }
 
-        join!(async { 1 }, async { 2 });
-
         Ok(())
     }
 
