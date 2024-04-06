@@ -172,17 +172,10 @@ where
     }
 }
 
-pub(super) mod actions {
-    use actix_web::web::Bytes;
-
-    #[derive(Debug)]
-    pub struct AddRaw(pub Bytes);
-}
-
 pub(super) mod handlers {
     use super::Data;
     use super::DataProcessingError;
-    use super::{actions, ProcessorAfterLaunched};
+    use super::ProcessorAfterLaunched;
     use crate::actors::Handler;
 
     use actix_web::web::Bytes;
