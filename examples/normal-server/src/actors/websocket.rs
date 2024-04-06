@@ -1,14 +1,15 @@
 use actix_web::{error::PayloadError, web::Bytes};
 use futures::Stream;
 use futures_util::stream::StreamExt;
+use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, Clone)]
 pub enum FeedRawDataError {
     #[error("the given action channel is closed")]
     ActionChannelClosed,
     #[error("failed to retrieve new bytes from the source stream (payload error occurred)")]
-    PayloadError(PayloadError),
+    PayloadError(Arc<PayloadError>),
 }
 
 pub async fn feed_raw_data<S, A, M>(
@@ -28,7 +29,7 @@ where
                 .send(action)
                 .await
                 .map_err(|_| FeedRawDataError::ActionChannelClosed)?,
-            Err(e) => Err(FeedRawDataError::PayloadError(e))?,
+            Err(e) => Err(FeedRawDataError::PayloadError(Arc::new(e)))?,
         };
     }
 

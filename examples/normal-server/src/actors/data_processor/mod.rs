@@ -2,11 +2,12 @@ use self::{
     interval::CheckAlive,
     mutation::Mutation,
     saver::{DataSaver, LaunchedDataSaver},
-    streams::DataComing,
 };
-use super::service_broadcast_manager::LaunchedServiceBroadcastManager;
+use super::{
+    service_broadcast_manager::LaunchedServiceBroadcastManager, websocket::FeedRawDataError,
+};
 use crate::{
-    actors::Handler,
+    actors::{websocket::feed_raw_data, Handler},
     entities::{
         data,
         data_transaction::{self, ActiveModel},
@@ -40,7 +41,7 @@ pub enum ConnectionStatus {
 }
 
 pub struct DataProcessorBuilder {
-    data_coming: streams::DataComing<web::Payload>,
+    raw_data_stream: web::Payload,
     alive_checker: CheckAlive,
     data_saver: DataSaver,
     mutation: Mutation,
@@ -75,7 +76,7 @@ impl DataProcessorBuilder {
         };
 
         let mut data_processor_join_handle =
-            data_processor.launch(self.data_coming, self.alive_checker);
+            data_processor.launch(self.raw_data_stream, self.alive_checker);
 
         let ws_stream = stream! {
             loop {
@@ -133,6 +134,8 @@ pub enum GenericDataProcessingError {
 
 #[derive(Debug, thiserror::Error, Clone)]
 pub enum DataProcessingError {
+    #[error("failed to feed raw data")]
+    FeedRawDataError(FeedRawDataError),
     #[error("failed to decode the incoming websocket frame")]
     FrameDecodeFailed(Arc<ProtocolError>),
     #[error("failed to decode the data from the text frame")]
@@ -158,7 +161,7 @@ impl DataProcessor {
         db_coon: DatabaseConnection,
     ) -> DataProcessorBuilder {
         DataProcessorBuilder {
-            data_coming: DataComing::new(payload),
+            raw_data_stream: payload,
             alive_checker: CheckAlive::new(Duration::from_secs(15)),
             data_saver: DataSaver::new(db_coon.clone()),
             mutation: Mutation(db_coon),
@@ -168,19 +171,25 @@ impl DataProcessor {
 
     fn launch(
         self,
-        data_coming: DataComing<web::Payload>,
+        raw_data_stream: web::Payload,
         alive_checker: interval::CheckAlive,
     ) -> tokio::task::JoinHandle<Result<(), DataProcessingError>> {
-        actix_rt::spawn(async move { self.task(data_coming, alive_checker).await })
+        actix_rt::spawn(async move { self.task(raw_data_stream, alive_checker).await })
     }
 
     async fn task(
         mut self,
-        mut data_coming: DataComing<web::Payload>,
+        raw_data_stream: web::Payload,
         mut alive_checker: interval::CheckAlive,
     ) -> Result<(), DataProcessingError> {
         log::debug!("new data processor started");
         let (tx, mut rx) = tokio::sync::mpsc::channel::<actions::Action>(1);
+
+        let feed_raw_data = feed_raw_data(raw_data_stream, tx, |bytes| {
+            actions::Action::AddRaw(actions::AddRaw(bytes))
+        });
+
+        actix_rt::pin!(feed_raw_data);
 
         let mut err = self
             .launched_service_broadcast_manager
@@ -203,16 +212,12 @@ impl DataProcessor {
                         }
                     }
                 },
-                action = data_coming.next() => {
-                    let Some(action) = action else {break;};
-                    match action {
-                        Ok(act) => {
-                            tx.send(act).await.unwrap();
-                        },
-                        Err(e) => {
-                            err = Some(DataProcessingError::PayloadError(Arc::new(e)));
-                        },
+                result = &mut feed_raw_data => {
+                    match result {
+                        Ok(_) => {},
+                        Err(e) => err = Some(DataProcessingError::FeedRawDataError(e)),
                     }
+                    break
                 },
                 alive = alive_checker.tick() => {
                     if !alive {break;}
@@ -233,7 +238,7 @@ impl DataProcessor {
             return Err(err);
         }
 
-        join!(async {1}, async {2});
+        join!(async { 1 }, async { 2 });
 
         Ok(())
     }
@@ -471,41 +476,6 @@ pub(super) mod interval {
 
         pub fn update_last_pong(&mut self, pong: tokio::time::Instant) {
             self.last_pong = pong
-        }
-    }
-}
-
-pub(super) mod streams {
-    use super::actions::Action;
-    use crate::actors::data_processor::actions::AddRaw;
-
-    use actix_web::{error::PayloadError, web::Bytes};
-
-    use futures::{Stream, StreamExt};
-    use pin_project::pin_project;
-
-    #[pin_project]
-    #[derive(Debug)]
-    pub struct DataComing<S: Stream<Item = Result<Bytes, PayloadError>> + Unpin>(#[pin] S);
-
-    impl<S: Stream<Item = Result<Bytes, PayloadError>> + Unpin> DataComing<S> {
-        pub fn new(stream: S) -> Self {
-            Self(stream)
-        }
-
-        pub async fn next(&mut self) -> Option<Result<Action, PayloadError>> {
-            let stream = &mut self.0;
-
-            let Some(bytes) = stream.next().await else {
-                return None;
-            };
-
-            let bytes = match bytes {
-                Ok(b) => b,
-                Err(e) => return Some(Err(e)),
-            };
-
-            Some(Ok(Action::AddRaw(AddRaw(bytes))))
         }
     }
 }
