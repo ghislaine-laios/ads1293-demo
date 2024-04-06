@@ -1,5 +1,4 @@
-use std::time::Duration;
-
+use crate::actors::service_broadcast_manager;
 use actix_web::{middleware::Logger, web, App, HttpServer};
 use actors::{
     service_broadcast_manager::ServiceBroadcastManager, service_broadcaster::ServiceBroadcaster,
@@ -9,14 +8,15 @@ use migration::{Migrator, MigratorTrait};
 use sea_orm::Database;
 use settings::Settings;
 use smallvec::SmallVec;
+use std::time::Duration;
 use tokio::select;
-
-use crate::actors::service_broadcast_manager;
 
 pub mod actors;
 pub mod entities;
+pub mod errors;
 pub mod services;
 pub mod settings;
+
 #[cfg(test)]
 pub mod tests_utils;
 

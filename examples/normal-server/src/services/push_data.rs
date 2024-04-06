@@ -1,7 +1,11 @@
-use crate::actors::{
-    data_processor::DataProcessor, service_broadcast_manager::LaunchedServiceBroadcastManager,
+use crate::{
+    actors::{
+        data_processor::DataProcessor, service_broadcast_manager::LaunchedServiceBroadcastManager,
+    },
+    errors,
 };
 use actix_web::{get, web, Error, HttpRequest, HttpResponse};
+use anyhow::Context;
 use sea_orm::DatabaseConnection;
 use std::sync::Arc;
 
@@ -22,7 +26,11 @@ pub async fn push_data(
         launched_service_broadcast_manager,
         Arc::unwrap_or_clone(db_coon.into_inner()),
     );
-    let _ = data_processor.launch();
+    let _ = data_processor
+        .launch()
+        .await
+        .context("failed to launch the data processor")
+        .map_err(|e| errors::Error::InternalError(e))?;
     Ok(resp.streaming(stream))
 }
 

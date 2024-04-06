@@ -19,10 +19,9 @@ use actix_web::{
 };
 use anyhow::Context;
 use chrono::Local;
-use futures::Stream;
-use sea_orm::{DatabaseConnection, Set};
+use sea_orm::{DatabaseConnection, DbErr, Set};
 use std::{sync::Arc, time::Duration};
-use tokio::select;
+use tokio::{select, sync::mpsc};
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::codec::Encoder;
 
@@ -30,6 +29,8 @@ pub use normal_data::Data;
 
 mod mutation;
 mod saver;
+
+type WebsocketDataSender = tokio::sync::mpsc::Sender<Result<Bytes, DataProcessingError>>;
 
 #[derive(Clone, Copy, Debug)]
 pub enum ConnectionStatus {
@@ -39,20 +40,58 @@ pub enum ConnectionStatus {
     Closed,
 }
 
-// TODO: Add builder to remove options.
+pub struct DataProcessorBuilder {
+    data_coming: streams::DataComing<web::Payload>,
+    alive_checker: CheckAlive,
+    data_saver: DataSaver,
+    mutation: Mutation,
+    launched_service_broadcast_manager: LaunchedServiceBroadcastManager,
+    // TODO: Move this to the launch function
+    ws_sender: WebsocketDataSender,
+}
+
+impl DataProcessorBuilder {
+    pub async fn launch(self) -> Result<tokio::task::JoinHandle<()>, DbErr> {
+        let data_transaction = self
+            .mutation
+            .insert_data_transaction(ActiveModel {
+                start_time: Set(chrono::Local::now().naive_local()),
+                ..Default::default()
+            })
+            .await?;
+
+        let (launched_data_saver, _data_saver_join_handle) = self.data_saver.launch();
+
+        let data_processor = DataProcessor {
+            buf: BytesMut::new(),
+            codec: ws::Codec::new(),
+            ws_sender: self.ws_sender,
+            status: ConnectionStatus::Activated,
+            launched_service_broadcast_manager: self.launched_service_broadcast_manager,
+            last_pong: actix_rt::time::Instant::now(),
+            data_transaction,
+            launched_data_saver,
+        };
+
+        let data_processor_join_handle =
+            data_processor.launch(self.data_coming, self.alive_checker);
+
+        Ok(data_processor_join_handle)
+    }
+}
+
 pub struct DataProcessor {
     buf: BytesMut,
     codec: ws::Codec,
     ws_sender: tokio::sync::mpsc::Sender<Result<Bytes, DataProcessingError>>,
     status: ConnectionStatus,
-    data_coming: Option<streams::DataComing<web::Payload>>,
+    // data_coming: streams::DataComing<web::Payload>,
     launched_service_broadcast_manager: LaunchedServiceBroadcastManager,
-    alive_checker: Option<interval::CheckAlive>,
-    last_pong: tokio::time::Instant,
-    mutation: Mutation,
-    data_transaction: Option<data_transaction::Model>,
-    data_saver: Option<DataSaver>,
-    launched_data_saver: Option<LaunchedDataSaver>,
+    // alive_checker: Option<interval::CheckAlive>,
+    last_pong: actix_rt::time::Instant,
+    // mutation: Mutation,
+    data_transaction: data_transaction::Model,
+    launched_data_saver: LaunchedDataSaver,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -88,47 +127,42 @@ impl DataProcessor {
         payload: web::Payload,
         launched_service_broadcast_manager: LaunchedServiceBroadcastManager,
         db_coon: DatabaseConnection,
-    ) -> (Self, impl Stream<Item = Result<Bytes, DataProcessingError>>) {
-        let (tx, rx) = tokio::sync::mpsc::channel(8);
+    ) -> (
+        DataProcessorBuilder,
+        ReceiverStream<Result<Bytes, DataProcessingError>>,
+    ) {
+        let (tx, rx) = mpsc::channel(8);
 
         (
-            Self {
-                buf: BytesMut::new(),
-                codec: ws::Codec::new(),
-                ws_sender: tx,
-                status: ConnectionStatus::Activated,
-                data_coming: Some(DataComing::new(payload)),
+            DataProcessorBuilder {
+                data_coming: DataComing::new(payload),
+                alive_checker: CheckAlive::new(Duration::from_secs(15)),
+                data_saver: DataSaver::new(db_coon.clone()),
+                mutation: Mutation(db_coon),
                 launched_service_broadcast_manager,
-                alive_checker: Some(CheckAlive::new(Duration::from_secs(15))),
-                last_pong: tokio::time::Instant::now(),
-                mutation: Mutation(db_coon.clone()),
-                data_transaction: None,
-                data_saver: Some(DataSaver::new(db_coon)),
-                launched_data_saver: None,
+                ws_sender: tx,
             },
             ReceiverStream::new(rx),
         )
     }
 
-    pub fn launch(self) -> tokio::task::JoinHandle<()> {
+    fn launch(
+        self,
+        data_coming: DataComing<web::Payload>,
+        alive_checker: interval::CheckAlive,
+    ) -> tokio::task::JoinHandle<()> {
         actix_rt::spawn(async move {
-            self.task().await;
+            self.task(data_coming, alive_checker).await;
         })
     }
 
-    async fn task(mut self) {
+    async fn task(
+        mut self,
+        mut data_coming: DataComing<web::Payload>,
+        mut alive_checker: interval::CheckAlive,
+    ) {
         log::debug!("new data processor started");
         let (tx, mut rx) = tokio::sync::mpsc::channel::<actions::Action>(1);
-
-        let Some(mut data_coming) = self.data_coming.take() else {
-            log::error!("Cannot take the websocket data source. This task may has run before.");
-            return;
-        };
-
-        let Some(mut alive_checker) = self.alive_checker.take() else {
-            log::error!("Cannot take the alive checker. This task may has run before.");
-            return;
-        };
 
         let mut err = self
             .launched_service_broadcast_manager
@@ -137,16 +171,6 @@ impl DataProcessor {
             .context("failed to register this connection to the manager due to closed channel")
             .map_err(|e| DataProcessingError::InternalBug(Arc::new(e)))
             .err();
-
-        if err.is_none() {
-            let data_saver = self.data_saver.take().unwrap();
-            let (launched, _) = data_saver.launch();
-            self.launched_data_saver = Some(launched);
-        }
-
-        if err.is_none() {
-            err = self.started().await.err();
-        }
 
         while err.is_none() {
             alive_checker.update_last_pong(self.last_pong);
@@ -208,20 +232,6 @@ impl DataProcessor {
         if let GenericDataProcessingError::Uninformed(err) = generic_err {
             log::error!("encountered an informed error: {:#?}", err);
         }
-    }
-
-    async fn started(&mut self) -> Result<(), DataProcessingError> {
-        self.data_transaction = Some(
-            self.mutation
-                .insert_data_transaction(ActiveModel {
-                    start_time: Set(chrono::Local::now().naive_local()),
-                    ..Default::default()
-                })
-                .await
-                .map_err(|e| DataProcessingError::InternalBug(Arc::new(e.into())))?,
-        );
-
-        Ok(())
     }
 
     async fn process_action(&mut self, action: actions::Action) -> Result<(), DataProcessingError> {
@@ -373,11 +383,10 @@ impl DataProcessor {
     async fn process_data(&mut self, data: Data) -> Result<(), DataProcessingError> {
         log::trace!("data: {:?}", data);
 
-        let saver = self.launched_data_saver.as_ref().unwrap();
-        saver
+        self.launched_data_saver
             .save_timeout(
                 data::ActiveModel {
-                    data_transaction_id: Set(self.data_transaction.as_ref().unwrap().id),
+                    data_transaction_id: Set(self.data_transaction.id),
                     id: Set(data.id.into()),
                     value: Set(data
                         .value
