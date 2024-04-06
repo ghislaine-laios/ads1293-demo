@@ -239,28 +239,6 @@ impl DataProcessor {
         }
 
         Ok(())
-
-        // let Some(err) = err else {
-        //     return;
-        // };
-
-        // let generic_err = if !matches!(
-        //     err,
-        //     DataProcessingError::SendToPeerError(SendToPeerError::ChannelClosed)
-        // ) {
-        //     self.notify_err(err.clone())
-        //         .await
-        //         .map(|_| GenericDataProcessingError::Informed(err))
-        //         .map_err(|e| DataProcessingError::InternalBug(Arc::new(e.into())))
-        //         .map_err(|e| GenericDataProcessingError::Uninformed(e))
-        //         .unwrap_or_else(|e| e)
-        // } else {
-        //     GenericDataProcessingError::Uninformed(err)
-        // };
-
-        // if let GenericDataProcessingError::Uninformed(err) = generic_err {
-        //     log::error!("encountered an informed error: {:#?}", err);
-        // }
     }
 
     async fn process_action(&mut self, action: actions::Action) -> Result<(), DataProcessingError> {
