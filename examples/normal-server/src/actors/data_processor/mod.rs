@@ -1,10 +1,11 @@
 use self::{
-    interval::CheckAlive,
     mutation::Mutation,
     saver::{DataSaver, LaunchedDataSaver},
 };
 use super::{
-    service_broadcast_manager::LaunchedServiceBroadcastManager, websocket::FeedRawDataError,
+    interval::watch_dog::{self, TimeoutHandle, WatchDog},
+    service_broadcast_manager::LaunchedServiceBroadcastManager,
+    websocket::FeedRawDataError,
 };
 use crate::{
     actors::{websocket::feed_raw_data, Handler},
@@ -21,6 +22,7 @@ use actix_web::{
 use anyhow::Context;
 use async_stream::stream;
 use chrono::Local;
+use core::time;
 use futures::Stream;
 use sea_orm::{DatabaseConnection, DbErr, Set};
 use std::{sync::Arc, time::Duration};
@@ -42,7 +44,7 @@ pub enum ConnectionStatus {
 
 pub struct DataProcessorBuilder {
     raw_data_stream: web::Payload,
-    alive_checker: CheckAlive,
+    watch_dog: WatchDog,
     data_saver: DataSaver,
     mutation: Mutation,
     launched_service_broadcast_manager: LaunchedServiceBroadcastManager,
@@ -62,6 +64,8 @@ impl DataProcessorBuilder {
 
         let (launched_data_saver, _data_saver_join_handle) = self.data_saver.launch();
 
+        let (launched_watch_dog, timeout_handle) = self.watch_dog.launch();
+
         let (tx, mut rx) = mpsc::channel(8);
 
         let data_processor = DataProcessor {
@@ -70,13 +74,13 @@ impl DataProcessorBuilder {
             ws_sender: tx,
             status: ConnectionStatus::Activated,
             launched_service_broadcast_manager: self.launched_service_broadcast_manager,
-            last_pong: actix_rt::time::Instant::now(),
+            watch_dog: launched_watch_dog,
             data_transaction,
             launched_data_saver,
         };
 
         let mut data_processor_join_handle =
-            data_processor.launch(self.raw_data_stream, self.alive_checker);
+            data_processor.launch(self.raw_data_stream, timeout_handle);
 
         let ws_stream = stream! {
             loop {
@@ -119,7 +123,7 @@ pub struct DataProcessor {
     ws_sender: mpsc::Sender<Bytes>,
     status: ConnectionStatus,
     launched_service_broadcast_manager: LaunchedServiceBroadcastManager,
-    last_pong: actix_rt::time::Instant,
+    watch_dog: watch_dog::LaunchedWatchDog,
     data_transaction: data_transaction::Model,
     launched_data_saver: LaunchedDataSaver,
 }
@@ -162,7 +166,7 @@ impl DataProcessor {
     ) -> DataProcessorBuilder {
         DataProcessorBuilder {
             raw_data_stream: payload,
-            alive_checker: CheckAlive::new(Duration::from_secs(15)),
+            watch_dog: WatchDog::new(Duration::from_secs(15), Duration::from_secs(1)),
             data_saver: DataSaver::new(db_coon.clone()),
             mutation: Mutation(db_coon),
             launched_service_broadcast_manager,
@@ -172,15 +176,15 @@ impl DataProcessor {
     fn launch(
         self,
         raw_data_stream: web::Payload,
-        alive_checker: interval::CheckAlive,
+        timeout: TimeoutHandle,
     ) -> tokio::task::JoinHandle<Result<(), DataProcessingError>> {
-        actix_rt::spawn(async move { self.task(raw_data_stream, alive_checker).await })
+        actix_rt::spawn(self.task(raw_data_stream, timeout))
     }
 
     async fn task(
         mut self,
         raw_data_stream: web::Payload,
-        mut alive_checker: interval::CheckAlive,
+        mut timeout: TimeoutHandle,
     ) -> Result<(), DataProcessingError> {
         log::debug!("new data processor started");
         let (tx, mut rx) = tokio::sync::mpsc::channel::<actions::Action>(1);
@@ -200,11 +204,9 @@ impl DataProcessor {
             .err();
 
         while err.is_none() {
-            alive_checker.update_last_pong(self.last_pong);
-
             select! {
                 action = rx.recv() => {
-                    let Some(action) = action else {break;};
+                    let Some(action) = action else {break};
                     match self.process_action(action).await {
                         Ok(_)=>{},
                         Err(e) => {
@@ -212,16 +214,14 @@ impl DataProcessor {
                         }
                     }
                 },
-                result = &mut feed_raw_data => {
-                    match result {
-                        Ok(_) => {},
-                        Err(e) => err = Some(DataProcessingError::FeedRawDataError(e)),
+                feed_end = &mut feed_raw_data => {
+                    if let Err(e) = feed_end {
+                        err = Some(DataProcessingError::FeedRawDataError(e))
                     }
+
                     break
                 },
-                alive = alive_checker.tick() => {
-                    if !alive {break;}
-                }
+                timeout = &mut timeout => {timeout.unwrap(); break}
             }
         }
 
@@ -292,8 +292,6 @@ impl DataProcessor {
                     return Ok(());
                 }
             }
-
-            self.last_pong = tokio::time::Instant::now();
 
             match frame {
                 actix_http::ws::Frame::Text(text) => {
@@ -430,6 +428,10 @@ pub mod handlers {
         type Output = Result<(), DataProcessingError>;
 
         async fn handle(&mut self, action: actions::AddRaw) -> Self::Output {
+            let _ = self.watch_dog.notify_alive().await.map_err(|e| {
+                log::warn!("cannot notify the watch dog. Error: {:?}", e);
+            });
+
             let actions::AddRaw(bytes) = action;
             self.decode_buf.extend_from_slice(&bytes[..]);
 
@@ -442,40 +444,6 @@ pub mod handlers {
             }
 
             Ok(())
-        }
-    }
-}
-
-pub(super) mod interval {
-    use std::time::Duration;
-
-    pub struct CheckAlive {
-        timeout: Duration,
-        last_pong: tokio::time::Instant,
-        ticker: tokio::time::Interval,
-    }
-
-    impl CheckAlive {
-        pub fn new(timeout: Duration) -> Self {
-            Self {
-                timeout,
-                last_pong: tokio::time::Instant::now(),
-                ticker: tokio::time::interval(Duration::from_secs(1)),
-            }
-        }
-
-        pub async fn tick(&mut self) -> bool {
-            let instant = self.ticker.tick().await;
-
-            let last_pong = self.last_pong.clone();
-            let duration = instant.duration_since(last_pong);
-            log::debug!("check alive duration: {:?}", duration);
-
-            duration <= self.timeout
-        }
-
-        pub fn update_last_pong(&mut self, pong: tokio::time::Instant) {
-            self.last_pong = pong
         }
     }
 }
