@@ -7,7 +7,6 @@ pub struct BroadcastInfo {
     pub port: u16,
 }
 
-
 #[derive(Debug, Deserialize, Clone)]
 pub struct Database {
     pub url: String,
@@ -17,7 +16,7 @@ pub struct Database {
 pub struct Settings {
     pub bind_to: BindTo,
     pub broadcast: BroadcastInfo,
-    pub database: Database
+    pub database: Database,
 }
 
 impl Settings {

@@ -21,12 +21,12 @@ pub async fn push_data(
         Arc::unwrap_or_clone(launched_service_broadcast_manager.into_inner());
 
     let mut resp = actix_web_actors::ws::handshake(&req)?;
-    let (data_processor, stream) = DataProcessor::new(
+    let data_processor = DataProcessor::new(
         stream,
         launched_service_broadcast_manager,
         Arc::unwrap_or_clone(db_coon.into_inner()),
     );
-    let _ = data_processor
+    let stream = data_processor
         .launch()
         .await
         .context("failed to launch the data processor")

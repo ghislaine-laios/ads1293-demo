@@ -39,3 +39,4 @@ sea-orm = { version = "0.12.14", features = [
 ] }
 migration = { path = "./migration" }
 chrono = { version = "0.4.37", features = ["now"] }
+scopeguard = "1.2.0"

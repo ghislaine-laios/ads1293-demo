@@ -18,11 +18,12 @@ use actix_web::{
     web::{self, Bytes, BytesMut},
 };
 use anyhow::Context;
+use async_stream::stream;
 use chrono::Local;
+use futures::Stream;
 use sea_orm::{DatabaseConnection, DbErr, Set};
 use std::{sync::Arc, time::Duration};
 use tokio::{select, sync::mpsc};
-use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::codec::Encoder;
 
 pub use normal_data::Data;
@@ -47,11 +48,13 @@ pub struct DataProcessorBuilder {
     mutation: Mutation,
     launched_service_broadcast_manager: LaunchedServiceBroadcastManager,
     // TODO: Move this to the launch function
-    ws_sender: WebsocketDataSender,
+    // ws_sender: WebsocketDataSender,
 }
 
 impl DataProcessorBuilder {
-    pub async fn launch(self) -> Result<tokio::task::JoinHandle<()>, DbErr> {
+    pub async fn launch(
+        self,
+    ) -> Result<impl Stream<Item = Result<Bytes, DataProcessingError>>, DbErr> {
         let data_transaction = self
             .mutation
             .insert_data_transaction(ActiveModel {
@@ -62,10 +65,12 @@ impl DataProcessorBuilder {
 
         let (launched_data_saver, _data_saver_join_handle) = self.data_saver.launch();
 
+        let (tx, mut rx) = mpsc::channel(8);
+
         let data_processor = DataProcessor {
-            buf: BytesMut::new(),
+            decode_buf: BytesMut::new(),
             codec: ws::Codec::new(),
-            ws_sender: self.ws_sender,
+            ws_sender: tx,
             status: ConnectionStatus::Activated,
             launched_service_broadcast_manager: self.launched_service_broadcast_manager,
             last_pong: actix_rt::time::Instant::now(),
@@ -73,23 +78,51 @@ impl DataProcessorBuilder {
             launched_data_saver,
         };
 
-        let data_processor_join_handle =
+        let mut data_processor_join_handle =
             data_processor.launch(self.data_coming, self.alive_checker);
 
-        Ok(data_processor_join_handle)
+        let ws_stream = stream! {
+            loop {
+                tokio::select! {
+                    bytes = rx.recv() => {
+                        match bytes {
+                            Some(bytes) => yield(Ok(bytes)),
+                            _ => break
+                        }
+                    },
+                    join_result = &mut data_processor_join_handle => {
+                        let task_result = match join_result {
+                            Ok(r) => r,
+                            Err(e) => {
+                                log::error!("A data processor task panicked: {:#?}", e);
+                                yield(Err(DataProcessingError::InternalBug(Arc::new(e.into()))));
+                                break
+                            }
+                        };
+
+                        if let Err(e) = task_result {
+                            log::error!(
+                                "A data processor task returned with error: {:#?}", e);
+                                yield(Err(e))
+                        }
+
+                        break
+                    }
+                };
+            }
+        };
+
+        Ok(ws_stream)
     }
 }
 
 pub struct DataProcessor {
-    buf: BytesMut,
+    decode_buf: BytesMut,
     codec: ws::Codec,
-    ws_sender: tokio::sync::mpsc::Sender<Result<Bytes, DataProcessingError>>,
+    ws_sender: tokio::sync::mpsc::Sender<Bytes>,
     status: ConnectionStatus,
-    // data_coming: streams::DataComing<web::Payload>,
     launched_service_broadcast_manager: LaunchedServiceBroadcastManager,
-    // alive_checker: Option<interval::CheckAlive>,
     last_pong: actix_rt::time::Instant,
-    // mutation: Mutation,
     data_transaction: data_transaction::Model,
     launched_data_saver: LaunchedDataSaver,
 }
@@ -127,40 +160,30 @@ impl DataProcessor {
         payload: web::Payload,
         launched_service_broadcast_manager: LaunchedServiceBroadcastManager,
         db_coon: DatabaseConnection,
-    ) -> (
-        DataProcessorBuilder,
-        ReceiverStream<Result<Bytes, DataProcessingError>>,
-    ) {
-        let (tx, rx) = mpsc::channel(8);
-
-        (
-            DataProcessorBuilder {
-                data_coming: DataComing::new(payload),
-                alive_checker: CheckAlive::new(Duration::from_secs(15)),
-                data_saver: DataSaver::new(db_coon.clone()),
-                mutation: Mutation(db_coon),
-                launched_service_broadcast_manager,
-                ws_sender: tx,
-            },
-            ReceiverStream::new(rx),
-        )
+    ) -> DataProcessorBuilder {
+        DataProcessorBuilder {
+            data_coming: DataComing::new(payload),
+            alive_checker: CheckAlive::new(Duration::from_secs(15)),
+            data_saver: DataSaver::new(db_coon.clone()),
+            mutation: Mutation(db_coon),
+            launched_service_broadcast_manager,
+            // ws_sender: tx,
+        }
     }
 
     fn launch(
         self,
         data_coming: DataComing<web::Payload>,
         alive_checker: interval::CheckAlive,
-    ) -> tokio::task::JoinHandle<()> {
-        actix_rt::spawn(async move {
-            self.task(data_coming, alive_checker).await;
-        })
+    ) -> tokio::task::JoinHandle<Result<(), DataProcessingError>> {
+        actix_rt::spawn(async move { self.task(data_coming, alive_checker).await })
     }
 
     async fn task(
         mut self,
         mut data_coming: DataComing<web::Payload>,
         mut alive_checker: interval::CheckAlive,
-    ) {
+    ) -> Result<(), DataProcessingError> {
         log::debug!("new data processor started");
         let (tx, mut rx) = tokio::sync::mpsc::channel::<actions::Action>(1);
 
@@ -211,27 +234,33 @@ impl DataProcessor {
             log::error!("{:?}", e);
         }
 
-        let Some(err) = err else {
-            return;
-        };
-
-        let generic_err = if !matches!(
-            err,
-            DataProcessingError::SendToPeerError(SendToPeerError::ChannelClosed)
-        ) {
-            self.notify_err(err.clone())
-                .await
-                .map(|_| GenericDataProcessingError::Informed(err))
-                .map_err(|e| DataProcessingError::InternalBug(Arc::new(e.into())))
-                .map_err(|e| GenericDataProcessingError::Uninformed(e))
-                .unwrap_or_else(|e| e)
-        } else {
-            GenericDataProcessingError::Uninformed(err)
-        };
-
-        if let GenericDataProcessingError::Uninformed(err) = generic_err {
-            log::error!("encountered an informed error: {:#?}", err);
+        if let Some(err) = err {
+            return Err(err);
         }
+
+        Ok(())
+
+        // let Some(err) = err else {
+        //     return;
+        // };
+
+        // let generic_err = if !matches!(
+        //     err,
+        //     DataProcessingError::SendToPeerError(SendToPeerError::ChannelClosed)
+        // ) {
+        //     self.notify_err(err.clone())
+        //         .await
+        //         .map(|_| GenericDataProcessingError::Informed(err))
+        //         .map_err(|e| DataProcessingError::InternalBug(Arc::new(e.into())))
+        //         .map_err(|e| GenericDataProcessingError::Uninformed(e))
+        //         .unwrap_or_else(|e| e)
+        // } else {
+        //     GenericDataProcessingError::Uninformed(err)
+        // };
+
+        // if let GenericDataProcessingError::Uninformed(err) = generic_err {
+        //     log::error!("encountered an informed error: {:#?}", err);
+        // }
     }
 
     async fn process_action(&mut self, action: actions::Action) -> Result<(), DataProcessingError> {
@@ -328,54 +357,37 @@ impl DataProcessor {
     }
 
     async fn send_to_peer(&mut self, msg: ws::Message) -> Result<(), SendToPeerError> {
-        // The status after the message was sent successfully
-        let mut status = self.status;
-        let make_result = || -> Result<Result<Bytes, DataProcessingError>, SendToPeerError> {
-            if matches!(msg, ws::Message::Close(_)) {
-                match self.status {
-                    ConnectionStatus::Activated => {
-                        status = ConnectionStatus::SeverRequestClosing;
-                    }
-                    ConnectionStatus::PeerRequestClosing => {
-                        status = ConnectionStatus::Closed;
-                    }
-                    ConnectionStatus::SeverRequestClosing | ConnectionStatus::Closed => {
-                        return Err(SendToPeerError::DuplicatedClose);
-                    }
+        let status = if matches!(msg, ws::Message::Close(_)) {
+            match self.status {
+                ConnectionStatus::Activated => ConnectionStatus::SeverRequestClosing,
+                ConnectionStatus::PeerRequestClosing => ConnectionStatus::Closed,
+                ConnectionStatus::SeverRequestClosing | ConnectionStatus::Closed => {
+                    return Err(SendToPeerError::DuplicatedClose)
                 }
-            } else if matches!(
-                self.status,
-                ConnectionStatus::SeverRequestClosing | ConnectionStatus::Closed
-            ) {
-                return Err(SendToPeerError::SendMessageAfterClosed);
             }
-
-            let mut buf = BytesMut::with_capacity(16);
-            self.codec
-                .encode(msg, &mut buf)
-                .map_err(|e| SendToPeerError::EncodingFailed(Arc::new(e)))?;
-
-            let buf = buf.freeze();
-            Ok(Ok(buf))
+        } else if matches!(
+            self.status,
+            ConnectionStatus::SeverRequestClosing | ConnectionStatus::Closed
+        ) {
+            return Err(SendToPeerError::SendMessageAfterClosed);
+        } else {
+            self.status
         };
 
-        let result = make_result()?;
+        let mut buf = BytesMut::with_capacity(32);
+
+        self.codec
+            .encode(msg, &mut buf)
+            .map_err(|e| SendToPeerError::EncodingFailed(Arc::new(e)))?;
 
         self.ws_sender
-            .send(result)
+            .send(buf.freeze())
             .await
             .map_err(|_| SendToPeerError::ChannelClosed)?;
 
         self.status = status;
 
         Ok(())
-    }
-
-    async fn notify_err(&self, err: DataProcessingError) -> Result<(), ErrorNotificationFailed> {
-        self.ws_sender
-            .send(Err(err))
-            .await
-            .map_err(|_| ErrorNotificationFailed)
     }
 }
 
@@ -439,11 +451,11 @@ pub mod handlers {
 
         async fn handle(&mut self, action: actions::AddRaw) -> Self::Output {
             let actions::AddRaw(bytes) = action;
-            self.buf.extend_from_slice(&bytes[..]);
+            self.decode_buf.extend_from_slice(&bytes[..]);
 
             while let Some(frame) = self
                 .codec
-                .decode(&mut self.buf)
+                .decode(&mut self.decode_buf)
                 .map_err(|e| DataProcessingError::FrameDecodeFailed(Arc::new(e)))?
             {
                 self.handle_frame(frame).await?

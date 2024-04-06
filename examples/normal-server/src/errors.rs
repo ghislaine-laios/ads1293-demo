@@ -8,10 +8,9 @@ pub enum Error {
 }
 
 impl ResponseError for Error {
-
     fn status_code(&self) -> StatusCode {
         match &self {
-            Self::InternalError(_) => StatusCode::INTERNAL_SERVER_ERROR
+            Self::InternalError(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 
