@@ -47,8 +47,6 @@ pub struct DataProcessorBuilder {
     data_saver: DataSaver,
     mutation: Mutation,
     launched_service_broadcast_manager: LaunchedServiceBroadcastManager,
-    // TODO: Move this to the launch function
-    // ws_sender: WebsocketDataSender,
 }
 
 impl DataProcessorBuilder {
@@ -167,7 +165,6 @@ impl DataProcessor {
             data_saver: DataSaver::new(db_coon.clone()),
             mutation: Mutation(db_coon),
             launched_service_broadcast_manager,
-            // ws_sender: tx,
         }
     }
 
