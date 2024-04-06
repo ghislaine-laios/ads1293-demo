@@ -5,7 +5,7 @@ use self::{
 use super::{
     interval::watch_dog::{self, TimeoutHandle, WatchDog},
     service_broadcast_manager::LaunchedServiceBroadcastManager,
-    websocket::{ws_output_stream, FeedRawDataError},
+    websocket::{ws_output_stream_with_join_handle, FeedRawDataError},
 };
 use crate::{
     actors::{websocket::feed_raw_data, Handler},
@@ -80,7 +80,7 @@ impl DataProcessorBuilder {
         let data_processor_join_handle =
             data_processor.launch(self.raw_data_stream, timeout_handle);
 
-        Ok(ws_output_stream(
+        Ok(ws_output_stream_with_join_handle(
             ws_receiver,
             data_processor_join_handle,
             |e| {

@@ -18,3 +18,7 @@ impl ResponseError for Error {
         HttpResponse::build(self.status_code()).body(self.to_string())
     }
 }
+
+#[derive(Debug, thiserror::Error)]
+#[error("the channel has closed")]
+pub struct ChannelClosedError;

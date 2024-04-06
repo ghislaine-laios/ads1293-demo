@@ -1,9 +1,11 @@
 use actix_rt::time::Instant;
 use actix_rt::time::Interval;
+use futures::Future;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
 use crate::actors::Handler;
+use crate::errors::ChannelClosedError;
 use actions::NotifyAlive;
 
 #[derive(Debug)]
@@ -49,10 +51,12 @@ impl WatchDog {
         )
     }
 
-    pub async fn wait_until_timeout(
-        mut self,
-        mut action_receiver: ActionReceiver,
-    ) -> Option<Timeout> {
+    pub fn launch_inline(self) -> (LaunchedWatchDog, impl Future<Output = Option<Timeout>>) {
+        let (launched, action_receiver) = LaunchedWatchDog::new();
+        (launched, self.wait_until_timeout(action_receiver))
+    }
+
+    async fn wait_until_timeout(mut self, mut action_receiver: ActionReceiver) -> Option<Timeout> {
         loop {
             log::trace!("watch dog loop begin.");
             tokio::select! {
@@ -95,6 +99,17 @@ impl LaunchedWatchDog {
         self.0
             .send_timeout(actions::Action::NotifyAlive, Duration::from_millis(10))
             .await
+    }
+
+    pub async fn do_notify_alive(&self) -> Result<(), ChannelClosedError> {
+        if let Err(e) = self.0.try_send(actions::Action::NotifyAlive) {
+            match e {
+                mpsc::error::TrySendError::Full(_) => {}
+                mpsc::error::TrySendError::Closed(_) => return Err(ChannelClosedError),
+            }
+        };
+
+        Ok(())
     }
 }
 

@@ -1,12 +1,14 @@
 use std::sync::Arc;
 
 use actix_web::{error::PayloadError, web::Bytes};
-use futures::Stream;
+use futures::{Future, Stream};
 use futures_util::stream::StreamExt;
 use tokio::{
     sync::mpsc::{Receiver, Sender},
     task::{JoinError, JoinHandle},
 };
+
+pub mod processor;
 
 #[derive(Debug, thiserror::Error, Clone)]
 pub enum FeedRawDataError {
@@ -40,7 +42,7 @@ where
     Ok(())
 }
 
-pub fn ws_output_stream<E: std::error::Error>(
+pub fn ws_output_stream_with_join_handle<E>(
     mut rx: Receiver<Bytes>,
     mut join_handle: JoinHandle<Result<(), E>>,
     panic_handle: impl FnOnce(JoinError) -> E,
@@ -79,4 +81,35 @@ pub fn ws_output_stream<E: std::error::Error>(
     };
 
     stream
+}
+
+pub fn ws_output_stream_with_fut<E>(
+    mut rx: Receiver<Bytes>,
+    future: impl Future<Output = Result<(), E>>,
+    error_handle: Option<impl FnOnce(E) -> E>,
+) -> impl Stream<Item = Result<Bytes, E>> {
+    async_stream::stream! {
+        actix_rt::pin!(future);
+
+        loop {
+            tokio::select! {
+                biased;
+
+                bytes = rx.recv() => {
+                    match bytes {
+                        Some(bytes) => yield Ok(bytes),
+                        None => break,
+                    }
+                },
+                result = &mut future => {
+                    let Err(mut e) = result else {break};
+                    if let Some(handle) = error_handle {
+                        e = handle(e)
+                    }
+                    yield Err(e);
+                    break
+                }
+            }
+        }
+    }
 }
