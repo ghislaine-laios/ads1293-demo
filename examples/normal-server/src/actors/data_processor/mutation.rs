@@ -10,12 +10,6 @@ impl Mutation {
     ) -> Result<data_transaction::Model, sea_orm::prelude::DbErr> {
         data_transaction.insert(&self.0).await
     }
-    pub async fn insert_data(
-        &self,
-        data: data::ActiveModel,
-    ) -> Result<data::Model, sea_orm::prelude::DbErr> {
-        data.insert(&self.0).await
-    }
 
     pub async fn bulk_insert_data<I: IntoIterator<Item = data::ActiveModel>>(
         &self,

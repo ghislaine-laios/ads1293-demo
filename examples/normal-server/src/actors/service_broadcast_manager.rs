@@ -212,7 +212,7 @@ mod tests {
         let settings = settings();
         let broadcaster = setup_broadcaster_from_settings(settings.clone()).await;
         let manager = ServiceBroadcastManager::new(broadcaster);
-        let (launched_manager, manager_join_handle) = manager.launch();
+        let (launched_manager, _manager_join_handle) = manager.launch();
 
         let log_socket_handle =
             actix_rt::spawn(
