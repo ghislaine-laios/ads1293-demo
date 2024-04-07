@@ -1,10 +1,10 @@
 use crate::actors::{
+    handler::ContextHandler,
     interval::watch_dog::WatchDog,
     websocket::{
         context::WebsocketContext, fut_into_output_stream, subtask::Subtask,
         websocket_handler::WebsocketHandler,
     },
-    Handler,
 };
 use actix_web::web::{self, Bytes};
 use futures::Stream;
@@ -45,7 +45,7 @@ where
         mpsc::Sender<A>,
     )
     where
-        P: Handler<A, Output = ()>,
+        P: ContextHandler<A, Context = WebsocketContext, Output = anyhow::Result<()>>,
     {
         let (launched_watch_dog, timeout_fut) = self.watch_dog.launch_inline();
 

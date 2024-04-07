@@ -12,7 +12,7 @@ use super::{
             actions::{Started, Stopping},
             new_ws_processor, ProcessorBeforeLaunched, ProcessorMeta,
         },
-        subtask::{self, NoSubtask},
+        subtask::NoSubtask,
     },
     Handler,
 };
@@ -25,7 +25,6 @@ mod launched;
 use actix_http::ws;
 use actix_web::web::{Bytes, Payload};
 use anyhow::Context;
-use futures::Stream;
 pub use id::DataPusherId;
 pub use launched::LaunchedDataPusher;
 
@@ -70,9 +69,7 @@ impl DataPusher {
 }
 
 impl WsDataPusherWrapper {
-    pub fn launch_inline(
-        self,
-    ){
+    pub fn launch_inline(self) {
         let (stream, tx) = self.0.launch_inline::<Action>();
     }
 }

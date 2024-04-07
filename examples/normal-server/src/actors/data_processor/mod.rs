@@ -21,7 +21,6 @@ use crate::{
     },
 };
 use actix_web::web::{Bytes, Payload};
-use anyhow::Context;
 use futures::{Future, Stream};
 use normal_data::Data;
 use sea_orm::{DatabaseConnection, DbErr, Set};
@@ -181,7 +180,7 @@ impl Handler<Stopping> for ReceiveDataFromHardware {
             .unregister_data_processor(self.id)
             .await
             .expect("failed to unregister this processor");
-        
+
         self.launched_service_broadcast_manager
             .unregister_connection()
             .await
@@ -189,10 +188,12 @@ impl Handler<Stopping> for ReceiveDataFromHardware {
     }
 }
 
-impl Handler<NoActions> for ReceiveDataFromHardware {
-    type Output = ();
+impl ContextHandler<NoActions> for ReceiveDataFromHardware {
+    type Output = anyhow::Result<()>;
 
-    async fn handle(&mut self, _: NoActions) -> Self::Output {
+    type Context = WebsocketContext;
+
+    async fn handle_with_context(&mut self, _: &mut Self::Context, _: NoActions) -> Self::Output {
         unreachable!()
     }
 }

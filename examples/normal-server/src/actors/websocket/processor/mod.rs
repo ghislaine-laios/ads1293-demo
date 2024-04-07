@@ -1,6 +1,7 @@
 use self::actions::{Started, Stopping};
 use super::{context::WebsocketContext, subtask::Subtask, websocket_handler::WebsocketHandler};
 use crate::actors::{
+    handler::ContextHandler,
     interval::watch_dog::{LaunchedWatchDog, Timeout},
     websocket::feed_raw_data,
     Handler,
@@ -38,7 +39,7 @@ where
     ) -> Result<(), ProcessingError<P>>
     where
         S: Subtask,
-        P: Handler<A, Output = ()>,
+        P: ContextHandler<A, Context = WebsocketContext, Output = anyhow::Result<()>>,
     {
         log::debug!("new websocket processor (actor) started");
         let (raw_incoming_tx, mut raw_incoming_rx) = mpsc::channel::<Bytes>(1);
@@ -75,7 +76,10 @@ where
                             action = rx.recv() => {
                                 'b: {
                                     let Some(action) = action else {break 'b true};
-                                    self.process_data_handler.handle(action).await;
+                                    self.process_data_handler.handle_with_context(
+                                        &mut self.websocket_context, action)
+                                        .await
+                                        .map_err(|e| ProcessingError::<P>::InternalBug(e))?;
                                     false
                                 }
                             }
