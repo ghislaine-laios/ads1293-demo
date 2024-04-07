@@ -29,14 +29,16 @@ impl<P> ProcessorAfterLaunched<P>
 where
     P: WebsocketHandler<Context = WebsocketContext>,
 {
-    pub async fn task<S>(
+    pub async fn task<S, A>(
         mut self,
         raw_data_stream: web::Payload,
         watch_dog: impl Future<Output = Option<Timeout>>,
         sub_task: S,
+        action_rx: Option<mpsc::Receiver<A>>,
     ) -> Result<(), ProcessingError<P>>
     where
         S: Subtask,
+        P: Handler<A, Output = ()>,
     {
         log::debug!("new websocket processor (actor) started");
         let (raw_incoming_tx, mut raw_incoming_rx) = mpsc::channel::<Bytes>(1);
@@ -56,19 +58,56 @@ where
 
         let error = {
             let process_incoming_raw = async {
-                while let Some(bytes) = raw_incoming_rx.recv().await {
-                    self.watch_dog.do_notify_alive().await.unwrap();
-                    self.websocket_context
-                        .handle_raw(bytes, &mut self.process_data_handler)
-                        .await
-                        .map_err(|e| ProcessingError::ProcessDataFailed(e))?;
+                let mut action_rx = action_rx;
+                loop {
+                    let rx_closed = if let Some(rx) = &mut action_rx {
+                        select! {
+                            biased;
+
+                            bytes = raw_incoming_rx.recv() => {
+                                let Some(bytes) = bytes else {break};
+                                self.websocket_context
+                                .handle_raw(bytes, &mut self.process_data_handler)
+                                .await
+                                .map_err(|e| ProcessingError::ProcessDataFailed(e))?;
+                                false
+                            },
+                            action = rx.recv() => {
+                                'b: {
+                                    let Some(action) = action else {break 'b true};
+                                    self.process_data_handler.handle(action).await;
+                                    false
+                                }
+                            }
+                        }
+                    } else {
+                        while let Some(bytes) = raw_incoming_rx.recv().await {
+                            self.watch_dog.do_notify_alive().await.unwrap();
+                            self.websocket_context
+                                .handle_raw(bytes, &mut self.process_data_handler)
+                                .await
+                                .map_err(|e| ProcessingError::ProcessDataFailed(e))?;
+                        }
+                        break;
+                    };
+
+                    if rx_closed {
+                        action_rx = None
+                    }
                 }
+
+                // while let Some(bytes) = raw_incoming_rx.recv().await {
+                //     self.watch_dog.do_notify_alive().await.unwrap();
+                //     self.websocket_context
+                //         .handle_raw(bytes, &mut self.process_data_handler)
+                //         .await
+                //         .map_err(|e| ProcessingError::ProcessDataFailed(e))?;
+                // }
 
                 Ok(())
             };
             actix_rt::pin!(process_incoming_raw);
 
-            
             let error = select! {
                 biased;
 
@@ -85,7 +124,7 @@ where
                 },
                 _ = &mut watch_dog => {None},
             };
-            
+
             error
         };
 

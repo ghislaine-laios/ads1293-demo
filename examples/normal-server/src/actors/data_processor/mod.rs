@@ -1,6 +1,9 @@
 use super::{
     handler::ContextHandler,
-    websocket::{context::WebsocketContext, processor::new_ws_processor},
+    websocket::{
+        context::WebsocketContext,
+        processor::{actions::NoActions, new_ws_processor},
+    },
 };
 use crate::{
     actors::{
@@ -17,10 +20,10 @@ use crate::{
     },
 };
 use actix_web::web::{Bytes, Payload};
-use futures::Future;
+use futures::{Future, Stream};
 use normal_data::Data;
 use sea_orm::{DatabaseConnection, DbErr, Set};
-use std::time::Duration;
+use std::{os::unix::process, time::Duration};
 
 use {
     mutation::Mutation,
@@ -59,15 +62,16 @@ pub struct ReceiveDataFromHardware {
     launched_data_saver: LaunchedDataSaver,
 }
 
+pub struct WsProcessorWrapper<F: Future<Output = Result<(), DbErr>>>(
+    ProcessorBeforeLaunched<ReceiveDataFromHardware, F>,
+);
+
 impl ReceiveDataFromHardware {
     pub async fn new_ws_processor(
         payload: Payload,
         db_coon: DatabaseConnection,
         launched_service_broadcast_manager: LaunchedServiceBroadcastManager,
-    ) -> Result<
-        ProcessorBeforeLaunched<ReceiveDataFromHardware, impl Future<Output = Result<(), DbErr>>>,
-        DbErr,
-    > {
+    ) -> Result<WsProcessorWrapper<impl Future<Output = Result<(), DbErr>>>, DbErr> {
         let data_transaction = Mutation(db_coon.clone())
             .insert_data_transaction(ActiveModel {
                 start_time: Set(chrono::Local::now().naive_local()),
@@ -77,7 +81,7 @@ impl ReceiveDataFromHardware {
 
         let (launched_data_saver, data_saver_fut) = DataSaver::new(db_coon).launch_inline(Some(60));
 
-        Ok(new_ws_processor(
+        let processor = new_ws_processor(
             payload,
             ProcessorMeta {
                 process_data_handler: ReceiveDataFromHardware {
@@ -89,7 +93,19 @@ impl ReceiveDataFromHardware {
                 watch_dog_timeout_seconds: 15,
                 watch_dog_check_interval_seconds: 1,
             },
-        ))
+        );
+
+        Ok(WsProcessorWrapper(processor))
+    }
+}
+
+impl<F: Future<Output = Result<(), DbErr>>> WsProcessorWrapper<F> {
+    pub fn launch_inline(
+        self,
+    ) -> impl Stream<
+        Item = Result<Bytes, super::websocket::processor::ProcessingError<ReceiveDataFromHardware>>,
+    > {
+        self.0.launch_inline::<NoActions>().0
     }
 }
 
@@ -142,5 +158,13 @@ impl Handler<Stopping> for ReceiveDataFromHardware {
             .unregister_connection()
             .await
             .map_err(|_| StopProcessingError::UnregisterConnectionFailed)
+    }
+}
+
+impl Handler<NoActions> for ReceiveDataFromHardware {
+    type Output = ();
+
+    async fn handle(&mut self, _: NoActions) -> Self::Output {
+        unreachable!()
     }
 }

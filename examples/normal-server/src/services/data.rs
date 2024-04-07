@@ -1,7 +1,7 @@
 use crate::{
     actors::{
         data_processor::ReceiveDataFromHardware,
-        service_broadcast_manager::LaunchedServiceBroadcastManager,
+        service_broadcast_manager::LaunchedServiceBroadcastManager, websocket::processor::actions::NoActions,
     },
     errors,
 };
@@ -31,7 +31,7 @@ pub async fn push_data(
     .map_err(|e| e.into())
     .map_err(errors::Error::InternalError)?;
 
-    let stream = data_processor.launch_inline(None);
+    let stream = data_processor.launch_inline();
     Ok(resp.streaming(stream))
 }
 

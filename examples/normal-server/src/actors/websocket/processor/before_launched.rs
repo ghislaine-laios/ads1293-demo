@@ -4,6 +4,7 @@ use crate::actors::{
         context::WebsocketContext, fut_into_output_stream, subtask::Subtask,
         websocket_handler::WebsocketHandler,
     },
+    Handler,
 };
 use actix_web::web::{self, Bytes};
 use futures::Stream;
@@ -37,13 +38,18 @@ where
     S: Subtask,
     <S as Subtask>::OutputError: 'static,
 {
-    pub fn launch_inline(
-        self,
-        ws_output_channel_size: Option<usize>,
-    ) -> impl Stream<Item = Result<Bytes, ProcessingError<P>>> {
+    pub fn launch_inline<A>(
+        self
+    ) -> (
+        impl Stream<Item = Result<Bytes, ProcessingError<P>>>,
+        mpsc::Sender<A>,
+    )
+    where
+        P: Handler<A, Output = ()>,
+    {
         let (launched_watch_dog, timeout_fut) = self.watch_dog.launch_inline();
 
-        let (ws_sender, ws_receiver) = mpsc::channel(ws_output_channel_size.unwrap_or(8));
+        let (ws_sender, ws_receiver) = mpsc::channel(8);
 
         let processor = Processor {
             watch_dog: launched_watch_dog,
@@ -51,15 +57,25 @@ where
             process_data_handler: self.process_data_handler,
         };
 
-        let fut = processor.task(self.raw_data_input_stream, timeout_fut, self.subtask);
+        let (action_tx, action_rx) = mpsc::channel(8);
 
-        fut_into_output_stream(
-            ws_receiver,
-            fut,
-            Some(|e| {
-                log::error!("the processor ended with error: {:?}", e);
-                e
-            }),
+        let fut = processor.task(
+            self.raw_data_input_stream,
+            timeout_fut,
+            self.subtask,
+            Some(action_rx),
+        );
+
+        (
+            fut_into_output_stream(
+                ws_receiver,
+                fut,
+                Some(|e| {
+                    log::error!("the processor ended with error: {:?}", e);
+                    e
+                }),
+            ),
+            action_tx,
         )
     }
 }
