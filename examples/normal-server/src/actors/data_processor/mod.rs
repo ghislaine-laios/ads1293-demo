@@ -1,4 +1,4 @@
-use super::handler::ContextHandler;
+use super::{handler::ContextHandler, websocket::context::WebsocketContext};
 use crate::{
     actors::{
         service_broadcast_manager::LaunchedServiceBroadcastManager,
@@ -101,7 +101,7 @@ impl Handler<Started> for ReceiveDataFromHardware {
 
 impl ContextHandler<Data> for ReceiveDataFromHardware {
     type Output = Result<(), DataProcessingError>;
-    type Context = Processor<Self>;
+    type Context = WebsocketContext;
 
     async fn handle_with_context(
         &mut self,
