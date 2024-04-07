@@ -1,10 +1,13 @@
-use super::{handler::ContextHandler, websocket::context::WebsocketContext};
+use super::{
+    handler::ContextHandler,
+    websocket::{context::WebsocketContext, processor::new_ws_processor},
+};
 use crate::{
     actors::{
         service_broadcast_manager::LaunchedServiceBroadcastManager,
         websocket::processor::{
             actions::{Started, Stopping},
-            Processor, ProcessorBeforeLaunched, ProcessorMeta,
+            ProcessorBeforeLaunched, ProcessorMeta,
         },
         Handler,
     },
@@ -72,7 +75,7 @@ impl ReceiveDataFromHardware {
 
         let (launched_data_saver, data_saver_fut) = DataSaver::new(db_coon).launch_inline(Some(60));
 
-        Ok(Processor::new(
+        Ok(new_ws_processor(
             payload,
             ProcessorMeta {
                 process_data_handler: ReceiveDataFromHardware {
