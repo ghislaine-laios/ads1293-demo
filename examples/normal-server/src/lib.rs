@@ -60,7 +60,7 @@ pub async fn app() -> anyhow::Result<()> {
             .wrap(Logger::default())
             .app_data(web::Data::new(launched_service_broadcast_manager.clone()))
             .app_data(web::Data::new(db_coon.clone()))
-            .service(services::push_data::push_data)
+            .service(services::data::push_data)
     })
     .bind(bind_to)
     .context(format!("failed to bind to {}:{}", bind_to.0, bind_to.1))?

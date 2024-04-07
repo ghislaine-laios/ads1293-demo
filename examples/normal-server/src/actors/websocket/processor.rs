@@ -153,10 +153,11 @@ where
 {
     pub fn launch_inline(
         self,
+        ws_output_channel_size: Option<usize>,
     ) -> impl Stream<Item = Result<Bytes, ProcessingError<P, S::OutputError>>> {
         let (launched_watch_dog, timeout_fut) = self.watch_dog.launch_inline();
 
-        let (ws_sender, ws_receiver) = mpsc::channel(8);
+        let (ws_sender, ws_receiver) = mpsc::channel(ws_output_channel_size.unwrap_or(8));
 
         let processor = ProcessorAfterLaunched {
             watch_dog: launched_watch_dog,

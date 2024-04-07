@@ -21,11 +21,7 @@ pub async fn push_data(
         Arc::unwrap_or_clone(launched_service_broadcast_manager.into_inner());
 
     let mut resp = actix_web_actors::ws::handshake(&req)?;
-    // let data_processor = DataProcessor::new(
-    //     stream,
-    //     launched_service_broadcast_manager,
-    //     Arc::unwrap_or_clone(db_coon.into_inner()),
-    // );
+
     let data_processor = ReceiveDataFromHardware::new_ws_processor(
         stream,
         Arc::unwrap_or_clone(db_coon.into_inner()),
@@ -34,12 +30,8 @@ pub async fn push_data(
     .await
     .map_err(|e| e.into())
     .map_err(errors::Error::InternalError)?;
-    let stream = data_processor.launch_inline();
-    // let stream = data_processor
-    //     .launch()
-    //     .await
-    //     .context("failed to launch the data processor")
-    //     .map_err(|e| errors::Error::InternalError(e))?;
+
+    let stream = data_processor.launch_inline(None);
     Ok(resp.streaming(stream))
 }
 
