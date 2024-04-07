@@ -10,7 +10,7 @@ use actix_http::ws::{self, ProtocolError};
 use actix_web::web::{self, Bytes, BytesMut};
 use futures::{Future, Stream, TryFutureExt};
 use normal_data::Data;
-use std::{fmt::Debug, marker::PhantomData, time::Duration};
+use std::{fmt::Debug, time::Duration};
 use tokio::{select, sync::mpsc};
 use tokio_util::codec::Encoder;
 
@@ -48,7 +48,7 @@ where
 
 pub trait Subtask
 where
-    Self::OutputError: Debug,
+    Self::OutputError: Debug + 'static,
 {
     type OutputError;
 
@@ -59,7 +59,7 @@ where
 impl<T, E> Subtask for T
 where
     T: Future<Output = Result<(), E>>,
-    E: Debug + std::error::Error,
+    E: Debug + std::error::Error + 'static,
 {
     type OutputError = E;
     fn task(self) -> impl Future<Output = Result<(), Self::OutputError>> {
@@ -88,7 +88,7 @@ pub enum ConnectionStatus {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum ProcessingError<P: WebsocketHandler, S: Debug> {
+pub enum ProcessingError<P: WebsocketHandler> {
     #[error("failed to feed raw data")]
     FeedRawDataError(FeedRawDataError),
     #[error("failed to decode the incoming websocket frame")]
@@ -106,7 +106,7 @@ pub enum ProcessingError<P: WebsocketHandler, S: Debug> {
     #[error("the stopping hook of the process data handler ended with error")]
     StopProcessingDataFailed(P::StoppingError),
     #[error("the subtask ended with error")]
-    SubtaskError(S),
+    SubtaskError(Box<dyn Debug>),
     #[error("an unknown internal bug occurred")]
     InternalBug(anyhow::Error),
 }
@@ -124,14 +124,11 @@ pub enum SendToPeerError {
 }
 
 // #[derive(Builder)]
-pub struct ProcessorMeta<
-    const WATCH_DOG_TIMEOUT_SECONDS: u64,
-    const WATCH_DOG_CHECK_INTERVAL_SECONDS: u64,
-    P: WebsocketHandler,
-    S: Subtask,
-> {
+pub struct ProcessorMeta<P: WebsocketHandler, S: Subtask> {
     pub process_data_handler: P,
     pub subtask: S,
+    pub watch_dog_timeout_seconds: u64,
+    pub watch_dog_check_interval_seconds: u64,
 }
 
 // TODO: simplify the generic parameters
@@ -150,11 +147,12 @@ impl<P, S> ProcessorBeforeLaunched<P, S>
 where
     P: WebsocketHandler,
     S: Subtask,
+    <S as Subtask>::OutputError: 'static,
 {
     pub fn launch_inline(
         self,
         ws_output_channel_size: Option<usize>,
-    ) -> impl Stream<Item = Result<Bytes, ProcessingError<P, S::OutputError>>> {
+    ) -> impl Stream<Item = Result<Bytes, ProcessingError<P>>> {
         let (launched_watch_dog, timeout_fut) = self.watch_dog.launch_inline();
 
         let (ws_sender, ws_receiver) = mpsc::channel(ws_output_channel_size.unwrap_or(8));
@@ -166,7 +164,6 @@ where
             status: ConnectionStatus::Activated,
             ws_sender,
             process_data_handler: self.process_data_handler,
-            _phantom: PhantomData::default(),
         };
 
         let fut = processor.task(self.raw_data_input_stream, timeout_fut, self.subtask);
@@ -182,10 +179,9 @@ where
     }
 }
 
-pub struct ProcessorAfterLaunched<P, S>
+pub struct ProcessorAfterLaunched<P>
 where
     P: WebsocketHandler,
-    S: Subtask,
 {
     watch_dog: LaunchedWatchDog,
     decode_buf: BytesMut,
@@ -193,43 +189,36 @@ where
     status: ConnectionStatus,
     ws_sender: mpsc::Sender<Bytes>,
     process_data_handler: P,
-    _phantom: PhantomData<S>,
 }
 
-impl<P, S> ProcessorAfterLaunched<P, S>
+impl<P> ProcessorAfterLaunched<P>
 where
     P: WebsocketHandler,
-    S: Subtask,
 {
-    pub fn new<
-        const WATCH_DOG_TIMEOUT_SECONDS: u64,
-        const WATCH_DOG_CHECK_INTERVAL_SECONDS: u64,
-    >(
-        payload: web::Payload,
-        meta: ProcessorMeta<
-            WATCH_DOG_CHECK_INTERVAL_SECONDS,
-            WATCH_DOG_CHECK_INTERVAL_SECONDS,
-            P,
-            S,
-        >,
-    ) -> ProcessorBeforeLaunched<P, S> {
+    pub fn new<S>(payload: web::Payload, meta: ProcessorMeta<P, S>) -> ProcessorBeforeLaunched<P, S>
+    where
+        S: Subtask,
+    {
         ProcessorBeforeLaunched {
             raw_data_input_stream: payload,
             watch_dog: WatchDog::new(
-                Duration::from_secs(WATCH_DOG_TIMEOUT_SECONDS),
-                Duration::from_secs(WATCH_DOG_CHECK_INTERVAL_SECONDS),
+                Duration::from_secs(meta.watch_dog_timeout_seconds),
+                Duration::from_secs(meta.watch_dog_check_interval_seconds),
             ),
             process_data_handler: meta.process_data_handler,
             subtask: meta.subtask,
         }
     }
 
-    pub async fn task(
+    pub async fn task<S>(
         mut self,
         raw_data_stream: web::Payload,
         watch_dog: impl Future<Output = Option<Timeout>>,
         sub_task: S,
-    ) -> Result<(), ProcessingError<P, S::OutputError>> {
+    ) -> Result<(), ProcessingError<P>>
+    where
+        S: Subtask,
+    {
         log::debug!("new websocket processor (actor) started");
         let (raw_incoming_tx, mut raw_incoming_rx) = mpsc::channel::<Bytes>(1);
 
@@ -252,11 +241,11 @@ where
                     self.handle(bytes).await?;
                 }
 
-                Ok::<(), ProcessingError<P, S::OutputError>>(())
+                Ok::<(), ProcessingError<P>>(())
             };
             actix_rt::pin!(process_incoming_raw);
 
-            let mut error: Option<ProcessingError<P, S::OutputError>> = None;
+            let mut error: Option<ProcessingError<P>> = None;
             while error.is_none() {
                 select! {
                     biased;
@@ -270,7 +259,9 @@ where
                         break
                     },
                     sub_task_end = &mut sub_task => {
-                        error = sub_task_end.map_err(ProcessingError::SubtaskError).err();
+                        error = sub_task_end.map_err(
+                            |e| ProcessingError::SubtaskError(Box::new(e))
+                        ).err();
                         break
                     },
                     _ = &mut watch_dog => break,
@@ -296,19 +287,18 @@ pub(super) mod handlers {
 
     use super::ProcessingError;
     use super::ProcessorAfterLaunched;
-    use super::Subtask;
+
     use super::WebsocketHandler;
     use crate::actors::Handler;
 
     use actix_web::web::Bytes;
     use tokio_util::codec::Decoder;
 
-    impl<P, S> Handler<Bytes> for ProcessorAfterLaunched<P, S>
+    impl<P> Handler<Bytes> for ProcessorAfterLaunched<P>
     where
         P: WebsocketHandler,
-        S: Subtask,
     {
-        type Output = Result<(), ProcessingError<P, S::OutputError>>;
+        type Output = Result<(), ProcessingError<P>>;
 
         async fn handle(&mut self, bytes: Bytes) -> Self::Output {
             let _ = self.watch_dog.do_notify_alive().await.map_err(|e| {
@@ -330,15 +320,11 @@ pub(super) mod handlers {
     }
 }
 
-impl<P, S> ProcessorAfterLaunched<P, S>
+impl<P> ProcessorAfterLaunched<P>
 where
     P: WebsocketHandler,
-    S: Subtask,
 {
-    async fn handle_frame(
-        &mut self,
-        frame: ws::Frame,
-    ) -> Result<(), ProcessingError<P, S::OutputError>> {
+    async fn handle_frame(&mut self, frame: ws::Frame) -> Result<(), ProcessingError<P>> {
         log::trace!("frame: {:?}", frame);
         async {
             match self.status {
@@ -435,7 +421,7 @@ where
         Ok(())
     }
 
-    async fn process_data(&mut self, data: Data) -> Result<(), ProcessingError<P, S::OutputError>> {
+    async fn process_data(&mut self, data: Data) -> Result<(), ProcessingError<P>> {
         log::trace!("data: {:?}", data);
         self.process_data_handler
             .handle(data)
@@ -444,10 +430,9 @@ where
     }
 }
 
-impl<P, S> Drop for ProcessorAfterLaunched<P, S>
+impl<P> Drop for ProcessorAfterLaunched<P>
 where
     P: WebsocketHandler,
-    S: Subtask,
 {
     fn drop(&mut self) {
         log::debug!("A websocket processor is dropped")

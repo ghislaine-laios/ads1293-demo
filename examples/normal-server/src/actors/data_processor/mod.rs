@@ -70,7 +70,7 @@ impl ReceiveDataFromHardware {
 
         let (launched_data_saver, data_saver_fut) = DataSaver::new(db_coon).launch_inline(Some(60));
 
-        Ok(Processor::new::<15, 1>(
+        Ok(Processor::new(
             payload,
             ProcessorMeta {
                 process_data_handler: ReceiveDataFromHardware {
@@ -79,6 +79,8 @@ impl ReceiveDataFromHardware {
                     launched_data_saver,
                 },
                 subtask: data_saver_fut,
+                watch_dog_timeout_seconds: 15,
+                watch_dog_check_interval_seconds: 1,
             },
         ))
     }
