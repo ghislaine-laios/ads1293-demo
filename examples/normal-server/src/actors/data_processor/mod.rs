@@ -25,6 +25,7 @@ use futures::{Future, Stream};
 use normal_data::Data;
 use sea_orm::{DatabaseConnection, DbErr, Set};
 use std::time::Duration;
+use tokio::sync::mpsc;
 
 use {
     mutation::Mutation,
@@ -72,7 +73,9 @@ pub struct ReceiveDataFromHardware {
 }
 
 pub struct WsProcessorWrapper<F: Future<Output = Result<(), DbErr>>>(
-    ProcessorBeforeLaunched<ReceiveDataFromHardware, F>,
+    ProcessorBeforeLaunched,
+    ReceiveDataFromHardware,
+    F,
 );
 
 impl ReceiveDataFromHardware {
@@ -94,20 +97,22 @@ impl ReceiveDataFromHardware {
         let processor = new_ws_processor(
             payload,
             ProcessorMeta {
-                process_data_handler: ReceiveDataFromHardware {
-                    id: data_transaction.id as u32,
-                    launched_service_broadcast_manager,
-                    launched_data_hub,
-                    data_transaction,
-                    launched_data_saver,
-                },
-                subtask: data_saver_fut,
                 watch_dog_timeout_seconds: 15,
                 watch_dog_check_interval_seconds: 1,
             },
         );
 
-        Ok(WsProcessorWrapper(processor))
+        Ok(WsProcessorWrapper(
+            processor,
+            ReceiveDataFromHardware {
+                id: data_transaction.id as u32,
+                launched_service_broadcast_manager,
+                launched_data_hub,
+                data_transaction,
+                launched_data_saver,
+            },
+            data_saver_fut,
+        ))
     }
 }
 
@@ -117,7 +122,8 @@ impl<F: Future<Output = Result<(), DbErr>>> WsProcessorWrapper<F> {
     ) -> impl Stream<
         Item = Result<Bytes, super::websocket::processor::ProcessingError<ReceiveDataFromHardware>>,
     > {
-        self.0.launch_inline::<NoActions>().0
+        let (_, rx) = mpsc::channel::<NoActions>(0);
+        self.0.launch_inline(self.1, self.2, rx)
     }
 }
 

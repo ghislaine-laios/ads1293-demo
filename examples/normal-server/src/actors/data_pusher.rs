@@ -25,8 +25,10 @@ mod launched;
 use actix_http::ws;
 use actix_web::web::{Bytes, Payload};
 use anyhow::Context;
+use futures::Stream;
 pub use id::DataPusherId;
 pub use launched::LaunchedDataPusher;
+use tokio::sync::mpsc;
 
 pub struct DataPusherBeforeLaunched {}
 
@@ -34,10 +36,10 @@ pub struct DataPusherBeforeLaunched {}
 pub struct DataPusher {
     id: DataPusherId,
     data_hub: LaunchedDataHub,
-    launched_self: Option<LaunchedDataPusher>,
+    launched_self: LaunchedDataPusher,
 }
 
-pub struct WsDataPusherWrapper(ProcessorBeforeLaunched<DataPusher, NoSubtask>);
+pub struct WsDataPusherWrapper(ProcessorBeforeLaunched, DataPusherId, LaunchedDataHub);
 
 impl DataPusher {
     pub async fn new_ws_data_pusher(
@@ -53,24 +55,30 @@ impl DataPusher {
         let processor = new_ws_processor(
             payload,
             ProcessorMeta {
-                process_data_handler: DataPusher {
-                    id,
-                    data_hub: launched_data_hub,
-                    launched_self: None,
-                },
-                subtask: NoSubtask,
                 watch_dog_timeout_seconds: 5,
                 watch_dog_check_interval_seconds: 1,
             },
         );
 
-        WsDataPusherWrapper(processor)
+        WsDataPusherWrapper(processor, id, launched_data_hub)
     }
 }
 
 impl WsDataPusherWrapper {
-    pub fn launch_inline(self) {
-        let (stream, tx) = self.0.launch_inline::<Action>();
+    pub fn launch_inline(
+        self,
+    ) -> impl Stream<Item = Result<Bytes, super::websocket::processor::ProcessingError<DataPusher>>>
+    {
+        let (tx, rx) = mpsc::channel::<Action>(8);
+        self.0.launch_inline(
+            DataPusher {
+                id: self.1,
+                data_hub: self.2,
+                launched_self: LaunchedDataPusher { tx },
+            },
+            NoSubtask,
+            rx,
+        )
     }
 }
 
@@ -79,10 +87,7 @@ impl Handler<Started> for DataPusher {
 
     async fn handle(&mut self, action: Started) -> Self::Output {
         self.data_hub
-            .register_data_pusher(RegisterDataPusher(
-                self.id,
-                self.launched_self.as_ref().unwrap().clone(),
-            ))
+            .register_data_pusher(RegisterDataPusher(self.id, self.launched_self.clone()))
             .await
             .context("the mailbox of provided data hub has closed. can't register data pusher")?;
 

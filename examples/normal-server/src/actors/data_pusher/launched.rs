@@ -7,7 +7,7 @@ use super::actions::{Action, NewData};
 
 #[derive(Debug, Clone)]
 pub struct LaunchedDataPusher {
-    tx: mpsc::Sender<Action>,
+    pub(super) tx: mpsc::Sender<Action>,
 }
 
 impl LaunchedDataPusher {
