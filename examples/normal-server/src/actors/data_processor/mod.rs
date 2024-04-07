@@ -1,3 +1,4 @@
+use super::handler::ContextHandler;
 use crate::{
     actors::{
         service_broadcast_manager::LaunchedServiceBroadcastManager,
@@ -17,6 +18,7 @@ use futures::Future;
 use normal_data::Data;
 use sea_orm::{DatabaseConnection, DbErr, Set};
 use std::time::Duration;
+
 use {
     mutation::Mutation,
     saver::{DataSaver, LaunchedDataSaver},
@@ -97,10 +99,15 @@ impl Handler<Started> for ReceiveDataFromHardware {
     }
 }
 
-impl Handler<Data> for ReceiveDataFromHardware {
+impl ContextHandler<Data> for ReceiveDataFromHardware {
     type Output = Result<(), DataProcessingError>;
+    type Context = Processor<Self>;
 
-    async fn handle(&mut self, data: Data) -> Self::Output {
+    async fn handle_with_context(
+        &mut self,
+        context: &mut Self::Context,
+        data: Data,
+    ) -> Self::Output {
         log::trace!("data: {:?}", data);
 
         self.launched_data_saver

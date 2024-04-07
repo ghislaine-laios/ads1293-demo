@@ -2,6 +2,7 @@ use self::actions::{Started, Stopping};
 pub use self::ProcessorAfterLaunched as Processor;
 use super::{fut_into_output_stream, FeedRawDataError};
 use crate::actors::{
+    handler::ContextHandler,
     interval::watch_dog::{LaunchedWatchDog, Timeout, WatchDog},
     websocket::feed_raw_data,
     Handler,
@@ -15,9 +16,12 @@ use tokio::{select, sync::mpsc};
 use tokio_util::codec::Encoder;
 
 pub trait WebsocketHandler:
-    Handler<Started, Output = Result<(), Self::StartedError>>
-    + Handler<Data, Output = Result<(), Self::ProcessDataError>>
-    + Handler<Stopping, Output = Result<(), Self::StoppingError>>
+    Handler<Started, Output = Result<(), <Self as WebsocketHandler>::StartedError>>
+    + ContextHandler<
+        Data,
+        Context = <Self as WebsocketHandler>::Context,
+        Output = Result<(), <Self as WebsocketHandler>::ProcessDataError>,
+    > + Handler<Stopping, Output = Result<(), <Self as WebsocketHandler>::StoppingError>>
     + Debug
 where
     Self::StartedError: Debug,
@@ -27,12 +31,13 @@ where
     type StartedError;
     type ProcessDataError;
     type StoppingError;
+    type Context;
 }
 
-impl<T, TS, TP, TST> WebsocketHandler for T
+impl<T, TS, TP, TST, Context> WebsocketHandler for T
 where
     T: Handler<Started, Output = Result<(), TS>>
-        + Handler<Data, Output = Result<(), TP>>
+        + ContextHandler<Data, Context = Context, Output = Result<(), TP>>
         + Handler<Stopping, Output = Result<(), TST>>
         + Debug,
     TS: Debug,
@@ -44,6 +49,8 @@ where
     type ProcessDataError = TP;
 
     type StoppingError = TST;
+
+    type Context = Context;
 }
 
 pub trait Subtask
@@ -134,7 +141,7 @@ pub struct ProcessorMeta<P: WebsocketHandler, S: Subtask> {
 // TODO: simplify the generic parameters
 pub struct ProcessorBeforeLaunched<P, S>
 where
-    P: WebsocketHandler,
+    P: WebsocketHandler<Context = ProcessorAfterLaunched<P>>,
     S: Subtask,
 {
     raw_data_input_stream: web::Payload,
@@ -145,7 +152,7 @@ where
 
 impl<P, S> ProcessorBeforeLaunched<P, S>
 where
-    P: WebsocketHandler,
+    P: WebsocketHandler<Context = ProcessorAfterLaunched<P>>,
     S: Subtask,
     <S as Subtask>::OutputError: 'static,
 {
@@ -163,7 +170,7 @@ where
             codec: ws::Codec::new(),
             status: ConnectionStatus::Activated,
             ws_sender,
-            process_data_handler: self.process_data_handler,
+            process_data_handler: Some(self.process_data_handler),
         };
 
         let fut = processor.task(self.raw_data_input_stream, timeout_fut, self.subtask);
@@ -181,19 +188,19 @@ where
 
 pub struct ProcessorAfterLaunched<P>
 where
-    P: WebsocketHandler,
+    P: WebsocketHandler<Context = Self>,
 {
     watch_dog: LaunchedWatchDog,
     decode_buf: BytesMut,
     codec: ws::Codec,
     status: ConnectionStatus,
     ws_sender: mpsc::Sender<Bytes>,
-    process_data_handler: P,
+    process_data_handler: Option<P>,
 }
 
 impl<P> ProcessorAfterLaunched<P>
 where
-    P: WebsocketHandler,
+    P: WebsocketHandler<Context = Self>,
 {
     pub fn new<S>(payload: web::Payload, meta: ProcessorMeta<P, S>) -> ProcessorBeforeLaunched<P, S>
     where
@@ -231,6 +238,8 @@ where
         actix_rt::pin!(sub_task);
 
         self.process_data_handler
+            .as_mut()
+            .unwrap()
             .handle(Started)
             .map_err(ProcessingError::StartProcessingDataFailed)
             .await?;
@@ -271,6 +280,8 @@ where
         };
 
         self.process_data_handler
+            .as_mut()
+            .unwrap()
             .handle(Stopping)
             .map_err(ProcessingError::StopProcessingDataFailed)
             .await?;
@@ -296,7 +307,7 @@ pub(super) mod handlers {
 
     impl<P> Handler<Bytes> for ProcessorAfterLaunched<P>
     where
-        P: WebsocketHandler,
+        P: WebsocketHandler<Context = Self>,
     {
         type Output = Result<(), ProcessingError<P>>;
 
@@ -322,7 +333,7 @@ pub(super) mod handlers {
 
 impl<P> ProcessorAfterLaunched<P>
 where
-    P: WebsocketHandler,
+    P: WebsocketHandler<Context = Self>,
 {
     async fn handle_frame(&mut self, frame: ws::Frame) -> Result<(), ProcessingError<P>> {
         log::trace!("frame: {:?}", frame);
@@ -423,16 +434,22 @@ where
 
     async fn process_data(&mut self, data: Data) -> Result<(), ProcessingError<P>> {
         log::trace!("data: {:?}", data);
-        self.process_data_handler
-            .handle(data)
+        let mut handler = self.process_data_handler.take().unwrap();
+
+        handler
+            .handle_with_context(self, data)
             .await
-            .map_err(ProcessingError::ProcessDataFailed)
+            .map_err(ProcessingError::ProcessDataFailed)?;
+
+        self.process_data_handler = Some(handler);
+
+        Ok(())
     }
 }
 
 impl<P> Drop for ProcessorAfterLaunched<P>
 where
-    P: WebsocketHandler,
+    P: WebsocketHandler<Context = Self>,
 {
     fn drop(&mut self) {
         log::debug!("A websocket processor is dropped")
