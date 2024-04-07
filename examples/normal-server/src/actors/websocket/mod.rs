@@ -42,7 +42,7 @@ where
     Ok(())
 }
 
-pub fn ws_output_stream_with_join_handle<E>(
+pub fn join_handle_into_output_stream<E>(
     mut rx: Receiver<Bytes>,
     mut join_handle: JoinHandle<Result<(), E>>,
     panic_handle: impl FnOnce(JoinError) -> E,
@@ -83,7 +83,7 @@ pub fn ws_output_stream_with_join_handle<E>(
     stream
 }
 
-pub fn ws_output_stream_with_fut<E>(
+pub fn fut_into_output_stream<E>(
     mut rx: Receiver<Bytes>,
     future: impl Future<Output = Result<(), E>>,
     error_handle: Option<impl FnOnce(E) -> E>,

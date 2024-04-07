@@ -5,7 +5,7 @@ use self::{
 use super::{
     interval::watch_dog::{self, TimeoutHandle, WatchDog},
     service_broadcast_manager::LaunchedServiceBroadcastManager,
-    websocket::{ws_output_stream_with_join_handle, FeedRawDataError},
+    websocket::{join_handle_into_output_stream, FeedRawDataError},
 };
 use crate::{
     actors::{websocket::feed_raw_data, Handler},
@@ -15,21 +15,19 @@ use crate::{
     },
 };
 use actix_http::ws::{self, ProtocolError};
-use actix_web::{
-    error::PayloadError,
-    web::{self, Bytes, BytesMut},
-};
+use actix_web::web::{self, Bytes, BytesMut};
 use anyhow::Context;
 use chrono::Local;
 use futures::Stream;
 use sea_orm::{DatabaseConnection, DbErr, Set};
 use std::{sync::Arc, time::Duration};
-use tokio::{join, select, sync::mpsc};
+use tokio::{select, sync::mpsc};
 use tokio_util::codec::Encoder;
 
 pub use normal_data::Data;
 
 mod mutation;
+pub mod neo;
 mod saver;
 
 #[derive(Clone, Copy, Debug)]
@@ -80,7 +78,7 @@ impl DataProcessorBuilder {
         let data_processor_join_handle =
             data_processor.launch(self.raw_data_stream, timeout_handle);
 
-        Ok(ws_output_stream_with_join_handle(
+        Ok(join_handle_into_output_stream(
             ws_receiver,
             data_processor_join_handle,
             |e| {

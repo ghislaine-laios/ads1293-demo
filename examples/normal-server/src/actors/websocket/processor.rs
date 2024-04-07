@@ -1,18 +1,18 @@
+use self::actions::{Started, Stopping};
+pub use self::ProcessorAfterLaunched as Processor;
+use super::{fut_into_output_stream, FeedRawDataError};
 use crate::actors::{
-    interval::watch_dog::{self, LaunchedWatchDog, Timeout, TimeoutHandle, WatchDog},
+    interval::watch_dog::{LaunchedWatchDog, Timeout, WatchDog},
     websocket::feed_raw_data,
     Handler,
 };
 use actix_http::ws::{self, ProtocolError};
 use actix_web::web::{self, Bytes, BytesMut};
-use derive_builder::Builder;
-use futures::Future;
+use futures::{Future, Stream, TryFutureExt};
 use normal_data::Data;
 use std::time::Duration;
 use tokio::{select, sync::mpsc};
 use tokio_util::codec::Encoder;
-
-use super::FeedRawDataError;
 
 #[derive(Clone, Copy, Debug)]
 pub enum ConnectionStatus {
@@ -23,7 +23,7 @@ pub enum ConnectionStatus {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum DataProcessingError<P> {
+pub enum ProcessingError<PSE, PE, PSTE> {
     #[error("failed to feed raw data")]
     FeedRawDataError(FeedRawDataError),
     #[error("failed to decode the incoming websocket frame")]
@@ -34,9 +34,12 @@ pub enum DataProcessingError<P> {
     SendToPeerError(SendToPeerError),
     #[error("the incoming websocket frame is not supported")]
     NotSupportedFrame(String),
+    #[error("the started hook of the process data handler ended with error")]
+    StartProcessingDataFailed(PSE),
     #[error("failed to process the data")]
-    ProcessDataFailed(P),
-
+    ProcessDataFailed(PE),
+    #[error("the stopping hook of the process data handler ended with error")]
+    StopProcessingDataFailed(PSTE),
     #[error("an unknown internal bug occurred")]
     InternalBug(anyhow::Error),
 }
@@ -57,31 +60,36 @@ pub enum SendToPeerError {
 pub struct ProcessorMeta<
     const WATCH_DOG_TIMEOUT_SECONDS: u64,
     const WATCH_DOG_CHECK_INTERVAL_SECONDS: u64,
-    P: FnMut(Data) -> Result<(), E>,
-    E,
+    P: Handler<Data, Output = Result<(), PE>>
+        + Handler<Started, Output = Result<(), PSE>>
+        + Handler<Stopping, Output = Result<(), PSTE>>,
+    PSE,
+    PE,
+    PSTE,
 > {
-    process_data_handler: P,
+    pub process_data_handler: P,
 }
 
-pub struct ProcessorBeforeLaunched<P, E>
+pub struct ProcessorBeforeLaunched<P, PSE, PE, PSTE>
 where
-    P: FnMut(Data) -> Result<(), E>,
+    P: Handler<Data, Output = Result<(), PE>>
+        + Handler<Started, Output = Result<(), PSE>>
+        + Handler<Stopping, Output = Result<(), PSTE>>,
 {
     raw_data_input_stream: web::Payload,
     watch_dog: WatchDog,
     process_data_handler: P,
 }
 
-impl<P, E> ProcessorBeforeLaunched<P, E>
+impl<P, PSE, PE, PSTE> ProcessorBeforeLaunched<P, PSE, PE, PSTE>
 where
-    P: FnMut(Data) -> Result<(), E>,
+    P: Handler<Data, Output = Result<(), PE>>
+        + Handler<Started, Output = Result<(), PSE>>
+        + Handler<Stopping, Output = Result<(), PSTE>>,
 {
     pub fn launch_inline(
         self,
-    ) -> (
-        impl Future<Output = Result<(), DataProcessingError<E>>>,
-        mpsc::Receiver<Bytes>,
-    ) {
+    ) -> impl Stream<Item = Result<Bytes, ProcessingError<PSE, PE, PSTE>>> {
         let (launched_watch_dog, timeout_fut) = self.watch_dog.launch_inline();
 
         let (ws_sender, ws_receiver) = mpsc::channel(8);
@@ -96,13 +104,23 @@ where
         };
 
         let fut = processor.task(self.raw_data_input_stream, timeout_fut);
-        (fut, ws_receiver)
+
+        fut_into_output_stream(
+            ws_receiver,
+            fut,
+            Some(|e| {
+                log::error!("");
+                e
+            }),
+        )
     }
 }
 
-pub struct ProcessorAfterLaunched<P, E>
+pub struct ProcessorAfterLaunched<P, PSE, PE, PSTE>
 where
-    P: FnMut(Data) -> Result<(), E>,
+    P: Handler<Data, Output = Result<(), PE>>
+        + Handler<Started, Output = Result<(), PSE>>
+        + Handler<Stopping, Output = Result<(), PSTE>>,
 {
     watch_dog: LaunchedWatchDog,
     decode_buf: BytesMut,
@@ -112,11 +130,13 @@ where
     process_data_handler: P,
 }
 
-impl<P, E> ProcessorAfterLaunched<P, E>
+impl<P, PSE, PE, PSTE> ProcessorAfterLaunched<P, PSE, PE, PSTE>
 where
-    P: FnMut(Data) -> Result<(), E>,
+    P: Handler<Data, Output = Result<(), PE>>
+        + Handler<Started, Output = Result<(), PSE>>
+        + Handler<Stopping, Output = Result<(), PSTE>>,
 {
-    pub async fn new<
+    pub fn new<
         const WATCH_DOG_TIMEOUT_SECONDS: u64,
         const WATCH_DOG_CHECK_INTERVAL_SECONDS: u64,
     >(
@@ -125,9 +145,11 @@ where
             WATCH_DOG_CHECK_INTERVAL_SECONDS,
             WATCH_DOG_CHECK_INTERVAL_SECONDS,
             P,
-            E,
+            PSE,
+            PE,
+            PSTE,
         >,
-    ) -> ProcessorBeforeLaunched<P, E> {
+    ) -> ProcessorBeforeLaunched<P, PSE, PE, PSTE> {
         ProcessorBeforeLaunched {
             raw_data_input_stream: payload,
             watch_dog: WatchDog::new(
@@ -142,7 +164,7 @@ where
         mut self,
         raw_data_stream: web::Payload,
         watch_dog: impl Future<Output = Option<Timeout>>,
-    ) -> Result<(), DataProcessingError<E>> {
+    ) -> Result<(), ProcessingError<PSE, PE, PSTE>> {
         log::debug!("new websocket processor (actor) started");
         let (raw_incoming_tx, mut raw_incoming_rx) = mpsc::channel::<Bytes>(1);
 
@@ -151,41 +173,53 @@ where
         actix_rt::pin!(feed_raw_data);
         actix_rt::pin!(watch_dog);
 
-        loop {
+        self.process_data_handler
+            .handle(Started)
+            .map_err(ProcessingError::StartProcessingDataFailed)
+            .await?;
+
+        let mut error = None;
+        while error.is_none() {
             select! {
                 biased;
 
                 bytes = raw_incoming_rx.recv() => {
                     let Some(bytes) = bytes else {break};
-                    self.handle(bytes).await?;
+                    error = self.handle(bytes).await.err();
 
                 },
                 feed_end = &mut feed_raw_data => {
-                    feed_end.map_err(DataProcessingError::FeedRawDataError)?;
-                    break
+                    error = feed_end.map_err(ProcessingError::FeedRawDataError).err();
                 },
                 _ = &mut watch_dog => break,
             }
         }
 
-        Ok(())
+        self.process_data_handler
+            .handle(Stopping)
+            .map_err(ProcessingError::StopProcessingDataFailed)
+            .await
     }
 }
 
 pub(super) mod handlers {
+    use super::actions::Started;
+    use super::actions::Stopping;
     use super::Data;
-    use super::DataProcessingError;
+    use super::ProcessingError;
     use super::ProcessorAfterLaunched;
     use crate::actors::Handler;
 
     use actix_web::web::Bytes;
     use tokio_util::codec::Decoder;
 
-    impl<P, E> Handler<Bytes> for ProcessorAfterLaunched<P, E>
+    impl<P, PSE, PE, PSTE> Handler<Bytes> for ProcessorAfterLaunched<P, PSE, PE, PSTE>
     where
-        P: FnMut(Data) -> Result<(), E>,
+        P: Handler<Data, Output = Result<(), PE>>
+            + Handler<Started, Output = Result<(), PSE>>
+            + Handler<Stopping, Output = Result<(), PSTE>>,
     {
-        type Output = Result<(), DataProcessingError<E>>;
+        type Output = Result<(), ProcessingError<PSE, PE, PSTE>>;
 
         async fn handle(&mut self, bytes: Bytes) -> Self::Output {
             let _ = self.watch_dog.do_notify_alive().await.map_err(|e| {
@@ -197,7 +231,7 @@ pub(super) mod handlers {
             while let Some(frame) = self
                 .codec
                 .decode(&mut self.decode_buf)
-                .map_err(DataProcessingError::FrameDecodeFailed)?
+                .map_err(ProcessingError::FrameDecodeFailed)?
             {
                 self.handle_frame(frame).await?
             }
@@ -207,11 +241,16 @@ pub(super) mod handlers {
     }
 }
 
-impl<P, E> ProcessorAfterLaunched<P, E>
+impl<P, PSE, PE, PSTE> ProcessorAfterLaunched<P, PSE, PE, PSTE>
 where
-    P: FnMut(Data) -> Result<(), E>,
+    P: Handler<Data, Output = Result<(), PE>>
+        + Handler<Started, Output = Result<(), PSE>>
+        + Handler<Stopping, Output = Result<(), PSTE>>,
 {
-    async fn handle_frame(&mut self, frame: ws::Frame) -> Result<(), DataProcessingError<E>> {
+    async fn handle_frame(
+        &mut self,
+        frame: ws::Frame,
+    ) -> Result<(), ProcessingError<PSE, PE, PSTE>> {
         log::trace!("frame: {:?}", frame);
         async {
             match self.status {
@@ -236,20 +275,20 @@ where
             match frame {
                 actix_http::ws::Frame::Text(text) => {
                     let data = serde_json::from_slice(&text[..])
-                        .map_err(DataProcessingError::DataDecodeFailed)?;
+                        .map_err(ProcessingError::DataDecodeFailed)?;
                     self.process_data(data).await?;
                     Ok(())
                 }
                 actix_http::ws::Frame::Binary(_) => {
-                    Err(DataProcessingError::NotSupportedFrame("binary".to_string()))
+                    Err(ProcessingError::NotSupportedFrame("binary".to_string()))
                 }
-                actix_http::ws::Frame::Continuation(_) => Err(
-                    DataProcessingError::NotSupportedFrame("continuation".to_string()),
-                ),
+                actix_http::ws::Frame::Continuation(_) => Err(ProcessingError::NotSupportedFrame(
+                    "continuation".to_string(),
+                )),
                 actix_http::ws::Frame::Ping(msg) => self
                     .send_to_peer(ws::Message::Pong(msg))
                     .await
-                    .map_err(DataProcessingError::SendToPeerError),
+                    .map_err(ProcessingError::SendToPeerError),
                 actix_http::ws::Frame::Pong(_) => Ok(()),
                 actix_http::ws::Frame::Close(_) => {
                     let r = match self.status {
@@ -267,7 +306,7 @@ where
                         }
                     };
 
-                    r.map_err(DataProcessingError::SendToPeerError)
+                    r.map_err(ProcessingError::SendToPeerError)
                 }
             }
         }
@@ -308,8 +347,30 @@ where
         Ok(())
     }
 
-    async fn process_data(&mut self, data: Data) -> Result<(), DataProcessingError<E>> {
+    async fn process_data(&mut self, data: Data) -> Result<(), ProcessingError<PSE, PE, PSTE>> {
         log::trace!("data: {:?}", data);
-        (self.process_data_handler)(data).map_err(DataProcessingError::ProcessDataFailed)
+        self.process_data_handler
+            .handle(data)
+            .await
+            .map_err(ProcessingError::ProcessDataFailed)
     }
+}
+
+impl<P, PSE, PE, PSTE> Drop for ProcessorAfterLaunched<P, PSE, PE, PSTE>
+where
+    P: Handler<Data, Output = Result<(), PE>>
+        + Handler<Started, Output = Result<(), PSE>>
+        + Handler<Stopping, Output = Result<(), PSTE>>,
+{
+    fn drop(&mut self) {
+        log::debug!("A websocket processor is dropped")
+    }
+}
+
+pub mod actions {
+    #[derive(Debug)]
+    pub struct Started;
+
+    #[derive(Debug)]
+    pub struct Stopping;
 }
