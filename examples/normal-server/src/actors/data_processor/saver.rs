@@ -1,17 +1,13 @@
-use std::time::Duration;
-
-use async_trait::async_trait;
+use self::actions::Save;
+use super::mutation::Mutation;
+use crate::{
+    actors::{websocket::processor::Subtask, Handler},
+    entities::data,
+};
 use futures::Future;
 use sea_orm::{DatabaseConnection, DbErr};
-
-use crate::{actors::{websocket::processor::Subtask, Handler}, entities::data};
-
-use self::actions::Save;
-
-use super::mutation::Mutation;
-
+use std::time::Duration;
 const FLUSH_TIME: usize = 10;
-
 pub struct DataSaver {
     buf: Vec<data::ActiveModel>,
     mutation: Mutation,
@@ -27,7 +23,7 @@ impl DataSaver {
 
     pub fn launch(
         self,
-        channel_size: Option<usize>
+        channel_size: Option<usize>,
     ) -> (
         LaunchedDataSaver,
         tokio::task::JoinHandle<Result<(), DbErr>>,
@@ -38,7 +34,10 @@ impl DataSaver {
         (launched, join_handle)
     }
 
-    pub fn launch_inline(self, channel_size: Option<usize>) -> (LaunchedDataSaver, impl Future<Output = Result<(), DbErr>>) {
+    pub fn launch_inline(
+        self,
+        channel_size: Option<usize>,
+    ) -> (LaunchedDataSaver, impl Future<Output = Result<(), DbErr>>) {
         let (tx, rx) = tokio::sync::mpsc::channel(channel_size.unwrap_or(10));
 
         (LaunchedDataSaver { tx }, self.task(rx))
@@ -60,7 +59,6 @@ impl DataSaver {
         self.handle(action).await
     }
 }
-
 
 #[derive(Debug)]
 pub struct LaunchedDataSaver {

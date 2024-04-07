@@ -1,9 +1,13 @@
+use super::{
+    mutation::Mutation,
+    saver::{DataSaver, LaunchedDataSaver},
+};
 use crate::{
     actors::{
         service_broadcast_manager::LaunchedServiceBroadcastManager,
         websocket::processor::{
             actions::{Started, Stopping},
-            NoSubtask, Processor, ProcessorBeforeLaunched, ProcessorMeta, Subtask,
+            Processor, ProcessorBeforeLaunched, ProcessorMeta,
         },
         Handler,
     },
@@ -13,16 +17,10 @@ use crate::{
     },
 };
 use actix_web::web::Payload;
-use async_trait::async_trait;
 use futures::Future;
 use normal_data::Data;
 use sea_orm::{DatabaseConnection, DbErr, Set};
 use std::time::Duration;
-
-use super::{
-    mutation::Mutation,
-    saver::{DataSaver, LaunchedDataSaver},
-};
 
 #[derive(Debug, thiserror::Error)]
 pub enum StartProcessingError {

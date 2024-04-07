@@ -8,10 +8,9 @@ use crate::actors::{
 };
 use actix_http::ws::{self, ProtocolError};
 use actix_web::web::{self, Bytes, BytesMut};
-use async_trait::async_trait;
 use futures::{Future, Stream, TryFutureExt};
 use normal_data::Data;
-use std::{fmt::Debug, marker::PhantomData, ops::Sub, process::Output, time::Duration};
+use std::{fmt::Debug, marker::PhantomData, time::Duration};
 use tokio::{select, sync::mpsc};
 use tokio_util::codec::Encoder;
 
@@ -455,7 +454,6 @@ where
 }
 
 pub mod actions {
-    use super::{ProcessingError, Subtask, WebsocketHandler};
 
     #[derive(Debug)]
     pub struct Started;
