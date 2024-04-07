@@ -1,4 +1,6 @@
-use crate::actors::service_broadcast_manager;
+#![feature(map_try_insert)]
+
+use crate::actors::{data_hub::DataHub, service_broadcast_manager};
 use actix_web::{middleware::Logger, web, App, HttpServer};
 use actors::{
     service_broadcast_manager::ServiceBroadcastManager, service_broadcaster::ServiceBroadcaster,
@@ -32,6 +34,9 @@ pub async fn app() -> anyhow::Result<()> {
     let (launched_service_broadcast_manager, service_broadcast_manager_fut) =
         service_manager.launch();
 
+    let data_hub = DataHub::new();
+    let (launched_data_hub, data_hub_fut) = data_hub.launch();
+
     let bind_to = &settings.bind_to;
     let bind_to = (bind_to.ip.as_str(), bind_to.port);
 
@@ -59,6 +64,7 @@ pub async fn app() -> anyhow::Result<()> {
         App::new()
             .wrap(Logger::default())
             .app_data(web::Data::new(launched_service_broadcast_manager.clone()))
+            .app_data(web::Data::new(launched_data_hub.clone()))
             .app_data(web::Data::new(db_coon.clone()))
             .service(services::data::push_data)
     })
@@ -81,6 +87,10 @@ pub async fn app() -> anyhow::Result<()> {
         result = service_broadcast_manager_fut => {
             handle_service_broadcast_manager_errors(result.unwrap());
             return Err(anyhow::anyhow!("the service broadcast manager ended with error"));
+        },
+        result = data_hub_fut => {
+            result.context("the data hub panicked")?
+            .context("the data hub ended with error")?
         }
     }
 

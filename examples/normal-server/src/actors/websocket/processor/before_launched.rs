@@ -39,7 +39,7 @@ where
     <S as Subtask>::OutputError: 'static,
 {
     pub fn launch_inline<A>(
-        self
+        self,
     ) -> (
         impl Stream<Item = Result<Bytes, ProcessingError<P>>>,
         mpsc::Sender<A>,

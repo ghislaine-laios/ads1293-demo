@@ -180,6 +180,17 @@ impl WebsocketContext {
         Ok(())
     }
 
+    pub async fn do_close(&mut self) {
+        if matches!(
+            self.status,
+            ConnectionStatus::SeverRequestClosing | ConnectionStatus::Closed
+        ) {
+            return;
+        }
+
+        let _r = self.send_to_peer(ws::Message::Close(None)).await;
+    }
+
     async fn process_bytes<P, E>(
         &mut self,
         handler: &mut P,

@@ -1,4 +1,5 @@
 use super::{
+    data_hub::LaunchedDataHub,
     handler::ContextHandler,
     websocket::{
         context::WebsocketContext,
@@ -20,21 +21,28 @@ use crate::{
     },
 };
 use actix_web::web::{Bytes, Payload};
+use anyhow::Context;
 use futures::{Future, Stream};
 use normal_data::Data;
 use sea_orm::{DatabaseConnection, DbErr, Set};
-use std::{os::unix::process, time::Duration};
+use std::time::Duration;
 
 use {
     mutation::Mutation,
     saver::{DataSaver, LaunchedDataSaver},
 };
 
+mod actions;
+mod id;
 mod mutation;
 mod saver;
 
+pub use id::*;
+
 #[derive(Debug, thiserror::Error)]
 pub enum StartProcessingError {
+    #[error("failed to register data processor to the data hub")]
+    RegisterProcessorFailed,
     #[error("failed to register the connection to the service broadcast manager due to the closed channel")]
     RegisterConnectionFailed,
 }
@@ -57,9 +65,11 @@ pub enum StopProcessingError {
 
 #[derive(Debug)]
 pub struct ReceiveDataFromHardware {
+    id: DataProcessorId,
     launched_service_broadcast_manager: LaunchedServiceBroadcastManager,
     data_transaction: data_transaction::Model,
     launched_data_saver: LaunchedDataSaver,
+    launched_data_hub: LaunchedDataHub,
 }
 
 pub struct WsProcessorWrapper<F: Future<Output = Result<(), DbErr>>>(
@@ -71,6 +81,7 @@ impl ReceiveDataFromHardware {
         payload: Payload,
         db_coon: DatabaseConnection,
         launched_service_broadcast_manager: LaunchedServiceBroadcastManager,
+        launched_data_hub: LaunchedDataHub,
     ) -> Result<WsProcessorWrapper<impl Future<Output = Result<(), DbErr>>>, DbErr> {
         let data_transaction = Mutation(db_coon.clone())
             .insert_data_transaction(ActiveModel {
@@ -85,7 +96,9 @@ impl ReceiveDataFromHardware {
             payload,
             ProcessorMeta {
                 process_data_handler: ReceiveDataFromHardware {
+                    id: data_transaction.id as u32,
                     launched_service_broadcast_manager,
+                    launched_data_hub,
                     data_transaction,
                     launched_data_saver,
                 },
@@ -113,6 +126,11 @@ impl Handler<Started> for ReceiveDataFromHardware {
     type Output = Result<(), StartProcessingError>;
 
     async fn handle(&mut self, _action: Started) -> Self::Output {
+        self.launched_data_hub
+            .register_data_processor(self.id)
+            .await
+            .map_err(|_| StartProcessingError::RegisterProcessorFailed)?;
+
         self.launched_service_broadcast_manager
             .register_connection()
             .await
@@ -134,6 +152,11 @@ impl ContextHandler<Bytes> for ReceiveDataFromHardware {
 
         log::trace!("data: {:?}", data);
 
+        self.launched_data_hub
+            .new_data_from_processor(self.id, data.clone())
+            .await
+            .expect("failed to send data to the data hub");
+
         self.launched_data_saver
             .save_timeout(
                 data::ActiveModel {
@@ -154,6 +177,11 @@ impl Handler<Stopping> for ReceiveDataFromHardware {
     type Output = Result<(), StopProcessingError>;
 
     async fn handle(&mut self, _action: Stopping) -> Self::Output {
+        self.launched_data_hub
+            .unregister_data_processor(self.id)
+            .await
+            .expect("failed to unregister this processor");
+        
         self.launched_service_broadcast_manager
             .unregister_connection()
             .await

@@ -96,14 +96,6 @@ where
                     }
                 }
 
-                // while let Some(bytes) = raw_incoming_rx.recv().await {
-                //     self.watch_dog.do_notify_alive().await.unwrap();
-                //     self.websocket_context
-                //         .handle_raw(bytes, &mut self.process_data_handler)
-                //         .await
-                //         .map_err(|e| ProcessingError::ProcessDataFailed(e))?;
-                // }
-
                 Ok(())
             };
             actix_rt::pin!(process_incoming_raw);
@@ -127,6 +119,8 @@ where
 
             error
         };
+
+        self.websocket_context.do_close().await;
 
         self.process_data_handler
             .handle(Stopping)

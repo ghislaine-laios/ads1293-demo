@@ -1,7 +1,7 @@
 use crate::{
     actors::{
-        data_processor::ReceiveDataFromHardware,
-        service_broadcast_manager::LaunchedServiceBroadcastManager, websocket::processor::actions::NoActions,
+        data_hub::LaunchedDataHub, data_processor::ReceiveDataFromHardware,
+        service_broadcast_manager::LaunchedServiceBroadcastManager,
     },
     errors,
 };
@@ -15,10 +15,13 @@ pub async fn push_data(
     req: HttpRequest,
     stream: web::Payload,
     launched_service_broadcast_manager: web::Data<LaunchedServiceBroadcastManager>,
+    launched_data_hub: web::Data<LaunchedDataHub>,
     db_coon: web::Data<DatabaseConnection>,
 ) -> Result<HttpResponse, Error> {
     let launched_service_broadcast_manager =
         Arc::unwrap_or_clone(launched_service_broadcast_manager.into_inner());
+
+    let launched_data_hub = Arc::unwrap_or_clone(launched_data_hub.into_inner());
 
     let mut resp = actix_web_actors::ws::handshake(&req)?;
 
@@ -26,6 +29,7 @@ pub async fn push_data(
         stream,
         Arc::unwrap_or_clone(db_coon.into_inner()),
         launched_service_broadcast_manager,
+        launched_data_hub,
     )
     .await
     .map_err(|e| e.into())
