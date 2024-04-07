@@ -15,6 +15,7 @@ mod processing_error;
 pub use self::ProcessorAfterLaunched as Processor;
 pub use before_launched::*;
 pub use processing_error::ProcessingError;
+
 pub struct ProcessorAfterLaunched<P>
 where
     P: WebsocketHandler<Context = WebsocketContext>,
@@ -67,28 +68,24 @@ where
             };
             actix_rt::pin!(process_incoming_raw);
 
-            let mut error = None;
-            while error.is_none() {
-                select! {
-                    biased;
+            
+            let error = select! {
+                biased;
 
-                    process_end = &mut process_incoming_raw => {
-                        error = process_end.err();
-                        break
-                    },
-                    feed_end = &mut feed_raw_data => {
-                        error = feed_end.map_err(ProcessingError::FeedRawDataError).err();
-                        break
-                    },
-                    sub_task_end = &mut sub_task => {
-                        error = sub_task_end.map_err(
-                            |e| ProcessingError::SubtaskError(Box::new(e))
-                        ).err();
-                        break
-                    },
-                    _ = &mut watch_dog => break,
-                }
-            }
+                process_end = &mut process_incoming_raw => {
+                    process_end.err()
+                },
+                feed_end = &mut feed_raw_data => {
+                    feed_end.map_err(ProcessingError::FeedRawDataError).err()
+                },
+                sub_task_end = &mut sub_task => {
+                    sub_task_end.map_err(
+                        |e| ProcessingError::SubtaskError(Box::new(e))
+                    ).err()
+                },
+                _ = &mut watch_dog => {None},
+            };
+            
             error
         };
 
