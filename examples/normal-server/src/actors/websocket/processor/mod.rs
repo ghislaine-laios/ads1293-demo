@@ -1,8 +1,5 @@
 use self::actions::{Started, Stopping};
-use super::{
-    context::WebsocketContext, subtask::Subtask, websocket_handler::WebsocketHandler,
-    FeedRawDataError,
-};
+use super::{context::WebsocketContext, subtask::Subtask, websocket_handler::WebsocketHandler};
 use crate::actors::{
     interval::watch_dog::{LaunchedWatchDog, Timeout},
     websocket::feed_raw_data,
@@ -10,7 +7,6 @@ use crate::actors::{
 };
 use actix_web::web::{self, Bytes};
 use futures::{Future, TryFutureExt};
-use std::fmt::Debug;
 use tokio::{select, sync::mpsc};
 
 pub mod actions;

@@ -1,12 +1,10 @@
-use std::fmt::Debug;
-
+use crate::actors::handler::ContextHandler;
 use actix_http::ws::{self, ProtocolError};
 use actix_web::web::{Bytes, BytesMut};
 use futures::TryFutureExt;
+use std::fmt::Debug;
 use tokio::sync::mpsc;
 use tokio_util::codec::{Decoder, Encoder};
-
-use crate::actors::handler::ContextHandler;
 
 #[derive(Clone, Copy, Debug)]
 pub enum ConnectionStatus {
