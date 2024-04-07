@@ -1,5 +1,8 @@
 use crate::{
-    actors::{data_processor::neo, service_broadcast_manager::LaunchedServiceBroadcastManager},
+    actors::{
+        data_processor::ReceiveDataFromHardware,
+        service_broadcast_manager::LaunchedServiceBroadcastManager,
+    },
     errors,
 };
 use actix_web::{get, web, Error, HttpRequest, HttpResponse};
@@ -23,7 +26,7 @@ pub async fn push_data(
     //     launched_service_broadcast_manager,
     //     Arc::unwrap_or_clone(db_coon.into_inner()),
     // );
-    let data_processor = neo::ReceiveDataFromHardware::new_ws_processor(
+    let data_processor = ReceiveDataFromHardware::new_ws_processor(
         stream,
         Arc::unwrap_or_clone(db_coon.into_inner()),
         launched_service_broadcast_manager,
@@ -44,6 +47,7 @@ pub async fn push_data(
 mod tests {
     use crate::{app, settings::Settings};
     use futures::SinkExt;
+    use normal_data::Data;
     use std::time::Duration;
     use tokio::select;
     use tokio_tungstenite::connect_async;
@@ -51,7 +55,6 @@ mod tests {
 
     #[actix_web::test]
     async fn it_works() {
-        use crate::actors::data_processor::Data;
         use tokio_tungstenite::tungstenite::Message::*;
 
         crate::tests_utils::setup_logger();
