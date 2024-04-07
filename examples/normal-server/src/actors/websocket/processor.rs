@@ -8,11 +8,77 @@ use crate::actors::{
 };
 use actix_http::ws::{self, ProtocolError};
 use actix_web::web::{self, Bytes, BytesMut};
+use async_trait::async_trait;
 use futures::{Future, Stream, TryFutureExt};
 use normal_data::Data;
-use std::time::Duration;
+use std::{fmt::Debug, marker::PhantomData, ops::Sub, process::Output, time::Duration};
 use tokio::{select, sync::mpsc};
 use tokio_util::codec::Encoder;
+
+pub trait WebsocketHandler:
+    Handler<Started, Output = Result<(), Self::StartedError>>
+    + Handler<Data, Output = Result<(), Self::ProcessDataError>>
+    + Handler<Stopping, Output = Result<(), Self::StoppingError>>
+    + Debug
+where
+    Self::StartedError: Debug,
+    Self::ProcessDataError: Debug,
+    Self::StoppingError: Debug,
+{
+    type StartedError;
+    type ProcessDataError;
+    type StoppingError;
+}
+
+impl<T, TS, TP, TST> WebsocketHandler for T
+where
+    T: Handler<Started, Output = Result<(), TS>>
+        + Handler<Data, Output = Result<(), TP>>
+        + Handler<Stopping, Output = Result<(), TST>>
+        + Debug,
+    TS: Debug,
+    TP: Debug,
+    TST: Debug,
+{
+    type StartedError = TS;
+
+    type ProcessDataError = TP;
+
+    type StoppingError = TST;
+}
+
+pub trait Subtask
+where
+    Self::OutputError: Debug,
+{
+    type OutputError;
+
+    #[allow(async_fn_in_trait)]
+    async fn task(self) -> Result<(), Self::OutputError>;
+}
+
+impl<T, E> Subtask for T
+where
+    T: Future<Output = Result<(), E>>,
+    E: Debug + std::error::Error,
+{
+    type OutputError = E;
+    fn task(self) -> impl Future<Output = Result<(), Self::OutputError>> {
+        self
+    }
+}
+
+pub struct NoSubtask;
+
+impl Subtask for NoSubtask {
+    type OutputError = ();
+
+    async fn task(self) -> Result<(), Self::OutputError> {
+        loop {
+            actix_rt::time::sleep(Duration::from_secs(60 * 60 * 24)).await;
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 pub enum ConnectionStatus {
@@ -23,7 +89,7 @@ pub enum ConnectionStatus {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum ProcessingError<PSE, PE, PSTE> {
+pub enum ProcessingError<P: WebsocketHandler, S: Debug> {
     #[error("failed to feed raw data")]
     FeedRawDataError(FeedRawDataError),
     #[error("failed to decode the incoming websocket frame")]
@@ -35,11 +101,13 @@ pub enum ProcessingError<PSE, PE, PSTE> {
     #[error("the incoming websocket frame is not supported")]
     NotSupportedFrame(String),
     #[error("the started hook of the process data handler ended with error")]
-    StartProcessingDataFailed(PSE),
+    StartProcessingDataFailed(P::StartedError),
     #[error("failed to process the data")]
-    ProcessDataFailed(PE),
+    ProcessDataFailed(P::ProcessDataError),
     #[error("the stopping hook of the process data handler ended with error")]
-    StopProcessingDataFailed(PSTE),
+    StopProcessingDataFailed(P::StoppingError),
+    #[error("the subtask ended with error")]
+    SubtaskError(S),
     #[error("an unknown internal bug occurred")]
     InternalBug(anyhow::Error),
 }
@@ -60,36 +128,33 @@ pub enum SendToPeerError {
 pub struct ProcessorMeta<
     const WATCH_DOG_TIMEOUT_SECONDS: u64,
     const WATCH_DOG_CHECK_INTERVAL_SECONDS: u64,
-    P: Handler<Data, Output = Result<(), PE>>
-        + Handler<Started, Output = Result<(), PSE>>
-        + Handler<Stopping, Output = Result<(), PSTE>>,
-    PSE,
-    PE,
-    PSTE,
+    P: WebsocketHandler,
+    S: Subtask,
 > {
     pub process_data_handler: P,
+    pub subtask: S,
 }
 
-pub struct ProcessorBeforeLaunched<P, PSE, PE, PSTE>
+// TODO: simplify the generic parameters
+pub struct ProcessorBeforeLaunched<P, S>
 where
-    P: Handler<Data, Output = Result<(), PE>>
-        + Handler<Started, Output = Result<(), PSE>>
-        + Handler<Stopping, Output = Result<(), PSTE>>,
+    P: WebsocketHandler,
+    S: Subtask,
 {
     raw_data_input_stream: web::Payload,
     watch_dog: WatchDog,
     process_data_handler: P,
+    subtask: S,
 }
 
-impl<P, PSE, PE, PSTE> ProcessorBeforeLaunched<P, PSE, PE, PSTE>
+impl<P, S> ProcessorBeforeLaunched<P, S>
 where
-    P: Handler<Data, Output = Result<(), PE>>
-        + Handler<Started, Output = Result<(), PSE>>
-        + Handler<Stopping, Output = Result<(), PSTE>>,
+    P: WebsocketHandler,
+    S: Subtask,
 {
     pub fn launch_inline(
         self,
-    ) -> impl Stream<Item = Result<Bytes, ProcessingError<PSE, PE, PSTE>>> {
+    ) -> impl Stream<Item = Result<Bytes, ProcessingError<P, S::OutputError>>> {
         let (launched_watch_dog, timeout_fut) = self.watch_dog.launch_inline();
 
         let (ws_sender, ws_receiver) = mpsc::channel(8);
@@ -101,26 +166,26 @@ where
             status: ConnectionStatus::Activated,
             ws_sender,
             process_data_handler: self.process_data_handler,
+            _phantom: PhantomData::default(),
         };
 
-        let fut = processor.task(self.raw_data_input_stream, timeout_fut);
+        let fut = processor.task(self.raw_data_input_stream, timeout_fut, self.subtask);
 
         fut_into_output_stream(
             ws_receiver,
             fut,
             Some(|e| {
-                log::error!("");
+                log::error!("the processor ended with error: {:?}", e);
                 e
             }),
         )
     }
 }
 
-pub struct ProcessorAfterLaunched<P, PSE, PE, PSTE>
+pub struct ProcessorAfterLaunched<P, S>
 where
-    P: Handler<Data, Output = Result<(), PE>>
-        + Handler<Started, Output = Result<(), PSE>>
-        + Handler<Stopping, Output = Result<(), PSTE>>,
+    P: WebsocketHandler,
+    S: Subtask,
 {
     watch_dog: LaunchedWatchDog,
     decode_buf: BytesMut,
@@ -128,13 +193,13 @@ where
     status: ConnectionStatus,
     ws_sender: mpsc::Sender<Bytes>,
     process_data_handler: P,
+    _phantom: PhantomData<S>,
 }
 
-impl<P, PSE, PE, PSTE> ProcessorAfterLaunched<P, PSE, PE, PSTE>
+impl<P, S> ProcessorAfterLaunched<P, S>
 where
-    P: Handler<Data, Output = Result<(), PE>>
-        + Handler<Started, Output = Result<(), PSE>>
-        + Handler<Stopping, Output = Result<(), PSTE>>,
+    P: WebsocketHandler,
+    S: Subtask,
 {
     pub fn new<
         const WATCH_DOG_TIMEOUT_SECONDS: u64,
@@ -145,11 +210,9 @@ where
             WATCH_DOG_CHECK_INTERVAL_SECONDS,
             WATCH_DOG_CHECK_INTERVAL_SECONDS,
             P,
-            PSE,
-            PE,
-            PSTE,
+            S,
         >,
-    ) -> ProcessorBeforeLaunched<P, PSE, PE, PSTE> {
+    ) -> ProcessorBeforeLaunched<P, S> {
         ProcessorBeforeLaunched {
             raw_data_input_stream: payload,
             watch_dog: WatchDog::new(
@@ -157,6 +220,7 @@ where
                 Duration::from_secs(WATCH_DOG_CHECK_INTERVAL_SECONDS),
             ),
             process_data_handler: meta.process_data_handler,
+            subtask: meta.subtask,
         }
     }
 
@@ -164,7 +228,8 @@ where
         mut self,
         raw_data_stream: web::Payload,
         watch_dog: impl Future<Output = Option<Timeout>>,
-    ) -> Result<(), ProcessingError<PSE, PE, PSTE>> {
+        sub_task: S,
+    ) -> Result<(), ProcessingError<P, S::OutputError>> {
         log::debug!("new websocket processor (actor) started");
         let (raw_incoming_tx, mut raw_incoming_rx) = mpsc::channel::<Bytes>(1);
 
@@ -173,53 +238,77 @@ where
         actix_rt::pin!(feed_raw_data);
         actix_rt::pin!(watch_dog);
 
+        let sub_task = sub_task.task();
+        actix_rt::pin!(sub_task);
+
         self.process_data_handler
             .handle(Started)
             .map_err(ProcessingError::StartProcessingDataFailed)
             .await?;
 
-        let mut error = None;
-        while error.is_none() {
-            select! {
-                biased;
+        let error = {
+            let process_incoming_raw = async {
+                while let Some(bytes) = raw_incoming_rx.recv().await {
+                    self.handle(bytes).await?;
+                }
 
-                bytes = raw_incoming_rx.recv() => {
-                    let Some(bytes) = bytes else {break};
-                    error = self.handle(bytes).await.err();
+                Ok::<(), ProcessingError<P, S::OutputError>>(())
+            };
+            actix_rt::pin!(process_incoming_raw);
 
-                },
-                feed_end = &mut feed_raw_data => {
-                    error = feed_end.map_err(ProcessingError::FeedRawDataError).err();
-                },
-                _ = &mut watch_dog => break,
+            let mut error: Option<ProcessingError<P, S::OutputError>> = None;
+            while error.is_none() {
+                select! {
+                    biased;
+
+                    process_end = &mut process_incoming_raw => {
+                        error = process_end.err();
+                        break
+                    },
+                    feed_end = &mut feed_raw_data => {
+                        error = feed_end.map_err(ProcessingError::FeedRawDataError).err();
+                        break
+                    },
+                    sub_task_end = &mut sub_task => {
+                        error = sub_task_end.map_err(ProcessingError::SubtaskError).err();
+                        break
+                    },
+                    _ = &mut watch_dog => break,
+                }
             }
-        }
+            error
+        };
 
         self.process_data_handler
             .handle(Stopping)
             .map_err(ProcessingError::StopProcessingDataFailed)
-            .await
+            .await?;
+
+        if let Some(e) = error {
+            Err(e)
+        } else {
+            Ok(())
+        }
     }
 }
 
 pub(super) mod handlers {
-    use super::actions::Started;
-    use super::actions::Stopping;
-    use super::Data;
+
     use super::ProcessingError;
     use super::ProcessorAfterLaunched;
+    use super::Subtask;
+    use super::WebsocketHandler;
     use crate::actors::Handler;
 
     use actix_web::web::Bytes;
     use tokio_util::codec::Decoder;
 
-    impl<P, PSE, PE, PSTE> Handler<Bytes> for ProcessorAfterLaunched<P, PSE, PE, PSTE>
+    impl<P, S> Handler<Bytes> for ProcessorAfterLaunched<P, S>
     where
-        P: Handler<Data, Output = Result<(), PE>>
-            + Handler<Started, Output = Result<(), PSE>>
-            + Handler<Stopping, Output = Result<(), PSTE>>,
+        P: WebsocketHandler,
+        S: Subtask,
     {
-        type Output = Result<(), ProcessingError<PSE, PE, PSTE>>;
+        type Output = Result<(), ProcessingError<P, S::OutputError>>;
 
         async fn handle(&mut self, bytes: Bytes) -> Self::Output {
             let _ = self.watch_dog.do_notify_alive().await.map_err(|e| {
@@ -241,16 +330,15 @@ pub(super) mod handlers {
     }
 }
 
-impl<P, PSE, PE, PSTE> ProcessorAfterLaunched<P, PSE, PE, PSTE>
+impl<P, S> ProcessorAfterLaunched<P, S>
 where
-    P: Handler<Data, Output = Result<(), PE>>
-        + Handler<Started, Output = Result<(), PSE>>
-        + Handler<Stopping, Output = Result<(), PSTE>>,
+    P: WebsocketHandler,
+    S: Subtask,
 {
     async fn handle_frame(
         &mut self,
         frame: ws::Frame,
-    ) -> Result<(), ProcessingError<PSE, PE, PSTE>> {
+    ) -> Result<(), ProcessingError<P, S::OutputError>> {
         log::trace!("frame: {:?}", frame);
         async {
             match self.status {
@@ -347,7 +435,7 @@ where
         Ok(())
     }
 
-    async fn process_data(&mut self, data: Data) -> Result<(), ProcessingError<PSE, PE, PSTE>> {
+    async fn process_data(&mut self, data: Data) -> Result<(), ProcessingError<P, S::OutputError>> {
         log::trace!("data: {:?}", data);
         self.process_data_handler
             .handle(data)
@@ -356,11 +444,10 @@ where
     }
 }
 
-impl<P, PSE, PE, PSTE> Drop for ProcessorAfterLaunched<P, PSE, PE, PSTE>
+impl<P, S> Drop for ProcessorAfterLaunched<P, S>
 where
-    P: Handler<Data, Output = Result<(), PE>>
-        + Handler<Started, Output = Result<(), PSE>>
-        + Handler<Stopping, Output = Result<(), PSTE>>,
+    P: WebsocketHandler,
+    S: Subtask,
 {
     fn drop(&mut self) {
         log::debug!("A websocket processor is dropped")
@@ -368,6 +455,8 @@ where
 }
 
 pub mod actions {
+    use super::{ProcessingError, Subtask, WebsocketHandler};
+
     #[derive(Debug)]
     pub struct Started;
 

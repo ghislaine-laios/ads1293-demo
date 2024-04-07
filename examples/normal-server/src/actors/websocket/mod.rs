@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{fmt::Debug, sync::Arc};
 
 use actix_web::{error::PayloadError, web::Bytes};
 use futures::{Future, Stream};
@@ -83,7 +83,7 @@ pub fn join_handle_into_output_stream<E>(
     stream
 }
 
-pub fn fut_into_output_stream<E>(
+pub fn fut_into_output_stream<E: Debug>(
     mut rx: Receiver<Bytes>,
     future: impl Future<Output = Result<(), E>>,
     error_handle: Option<impl FnOnce(E) -> E>,

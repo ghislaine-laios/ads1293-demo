@@ -1,13 +1,27 @@
-use actix_web::web::Payload;
-use normal_data::Data;
-
-use crate::actors::{
-    service_broadcast_manager::LaunchedServiceBroadcastManager,
-    websocket::processor::{
-        actions::{Started, Stopping},
-        Processor, ProcessorBeforeLaunched, ProcessorMeta,
+use crate::{
+    actors::{
+        service_broadcast_manager::LaunchedServiceBroadcastManager,
+        websocket::processor::{
+            actions::{Started, Stopping},
+            NoSubtask, Processor, ProcessorBeforeLaunched, ProcessorMeta, Subtask,
+        },
+        Handler,
     },
-    Handler,
+    entities::{
+        data,
+        data_transaction::{self, ActiveModel},
+    },
+};
+use actix_web::web::Payload;
+use async_trait::async_trait;
+use futures::Future;
+use normal_data::Data;
+use sea_orm::{DatabaseConnection, DbErr, Set};
+use std::time::Duration;
+
+use super::{
+    mutation::Mutation,
+    saver::{DataSaver, LaunchedDataSaver},
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -17,7 +31,12 @@ pub enum StartProcessingError {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum DataProcessingError {}
+pub enum DataProcessingError {
+    #[error("the value of the given data is out of range: (id: {}, value: {})", .0, .1)]
+    DataValueOutOfRange(u32, u32),
+    #[error("failed to save data using the data saver due to timeout")]
+    SaveDataTimeout,
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum StopProcessingError {
@@ -28,26 +47,36 @@ pub enum StopProcessingError {
 #[derive(Debug)]
 pub struct ReceiveDataFromHardware {
     launched_service_broadcast_manager: LaunchedServiceBroadcastManager,
+    data_transaction: data_transaction::Model,
+    launched_data_saver: LaunchedDataSaver,
 }
 
 impl ReceiveDataFromHardware {
-    pub fn new_ws_processor(
+    pub async fn new_ws_processor(
         payload: Payload,
+        db_coon: DatabaseConnection,
         launched_service_broadcast_manager: LaunchedServiceBroadcastManager,
-    ) -> ProcessorBeforeLaunched<
-        ReceiveDataFromHardware,
-        StartProcessingError,
-        DataProcessingError,
-        StopProcessingError,
-    > {
-        Processor::new::<15, 1>(
+    ) -> Result<ProcessorBeforeLaunched<ReceiveDataFromHardware, NoSubtask>, DbErr> {
+        let data_transaction = Mutation(db_coon.clone())
+            .insert_data_transaction(ActiveModel {
+                start_time: Set(chrono::Local::now().naive_local()),
+                ..Default::default()
+            })
+            .await?;
+
+        let (launched_data_saver, _data_join_handle) = DataSaver::new(db_coon).launch();
+
+        Ok(Processor::new::<15, 1>(
             payload,
             ProcessorMeta {
                 process_data_handler: ReceiveDataFromHardware {
                     launched_service_broadcast_manager,
+                    data_transaction,
+                    launched_data_saver,
                 },
+                subtask: NoSubtask,
             },
-        )
+        ))
     }
 }
 
@@ -66,9 +95,21 @@ impl Handler<Data> for ReceiveDataFromHardware {
     type Output = Result<(), DataProcessingError>;
 
     async fn handle(&mut self, data: Data) -> Self::Output {
-        log::info!("{:?}", data);
+        log::trace!("data: {:?}", data);
 
-        Ok(())
+        self.launched_data_saver
+            .save_timeout(
+                data::ActiveModel {
+                    data_transaction_id: Set(self.data_transaction.id),
+                    id: Set(data.id.into()),
+                    value: Set(data.value.try_into().map_err(|_| {
+                        DataProcessingError::DataValueOutOfRange(data.id, data.value)
+                    })?),
+                },
+                Duration::from_millis(200),
+            )
+            .await
+            .map_err(|_| DataProcessingError::SaveDataTimeout)
     }
 }
 

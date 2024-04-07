@@ -2030,6 +2030,7 @@ dependencies = [
  "anyhow",
  "async-std",
  "async-stream",
+ "async-trait",
  "chrono",
  "config",
  "derive_builder",

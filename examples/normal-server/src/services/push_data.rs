@@ -1,5 +1,6 @@
-use crate::actors::{
-    data_processor::neo, service_broadcast_manager::LaunchedServiceBroadcastManager,
+use crate::{
+    actors::{data_processor::neo, service_broadcast_manager::LaunchedServiceBroadcastManager},
+    errors,
 };
 use actix_web::{get, web, Error, HttpRequest, HttpResponse};
 use sea_orm::DatabaseConnection;
@@ -22,8 +23,14 @@ pub async fn push_data(
     //     launched_service_broadcast_manager,
     //     Arc::unwrap_or_clone(db_coon.into_inner()),
     // );
-    let data_processor =
-        neo::ReceiveDataFromHardware::new_ws_processor(stream, launched_service_broadcast_manager);
+    let data_processor = neo::ReceiveDataFromHardware::new_ws_processor(
+        stream,
+        Arc::unwrap_or_clone(db_coon.into_inner()),
+        launched_service_broadcast_manager,
+    )
+    .await
+    .map_err(|e| e.into())
+    .map_err(errors::Error::InternalError)?;
     let stream = data_processor.launch_inline();
     // let stream = data_processor
     //     .launch()

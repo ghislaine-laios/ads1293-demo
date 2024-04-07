@@ -1,8 +1,10 @@
 use std::time::Duration;
 
+use async_trait::async_trait;
+use futures::Future;
 use sea_orm::{DatabaseConnection, DbErr};
 
-use crate::{actors::Handler, entities::data};
+use crate::{actors::{websocket::processor::Subtask, Handler}, entities::data};
 
 use self::actions::Save;
 
@@ -29,10 +31,16 @@ impl DataSaver {
         LaunchedDataSaver,
         tokio::task::JoinHandle<Result<(), DbErr>>,
     ) {
-        let (tx, rx) = tokio::sync::mpsc::channel(10);
-        let join_handle = actix_rt::spawn(async move { self.task(rx).await });
+        let (launched, fut) = self.launch_inline();
+        let join_handle = actix_rt::spawn(fut);
 
-        (LaunchedDataSaver { tx }, join_handle)
+        (launched, join_handle)
+    }
+
+    pub fn launch_inline(self) -> (LaunchedDataSaver, impl Future<Output = Result<(), DbErr>>) {
+        let (tx, rx) = tokio::sync::mpsc::channel(10);
+
+        (LaunchedDataSaver { tx }, self.task(rx))
     }
 
     async fn task(
@@ -52,6 +60,8 @@ impl DataSaver {
     }
 }
 
+
+#[derive(Debug)]
 pub struct LaunchedDataSaver {
     tx: tokio::sync::mpsc::Sender<actions::Action>,
 }

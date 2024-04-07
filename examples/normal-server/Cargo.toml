@@ -41,3 +41,4 @@ migration = { path = "./migration" }
 chrono = { version = "0.4.37", features = ["now"] }
 scopeguard = "1.2.0"
 derive_builder = "0.20.0"
+async-trait = "0.1.79"
