@@ -27,18 +27,19 @@ impl DataSaver {
 
     pub fn launch(
         self,
+        channel_size: Option<usize>
     ) -> (
         LaunchedDataSaver,
         tokio::task::JoinHandle<Result<(), DbErr>>,
     ) {
-        let (launched, fut) = self.launch_inline();
+        let (launched, fut) = self.launch_inline(channel_size);
         let join_handle = actix_rt::spawn(fut);
 
         (launched, join_handle)
     }
 
-    pub fn launch_inline(self) -> (LaunchedDataSaver, impl Future<Output = Result<(), DbErr>>) {
-        let (tx, rx) = tokio::sync::mpsc::channel(10);
+    pub fn launch_inline(self, channel_size: Option<usize>) -> (LaunchedDataSaver, impl Future<Output = Result<(), DbErr>>) {
+        let (tx, rx) = tokio::sync::mpsc::channel(channel_size.unwrap_or(10));
 
         (LaunchedDataSaver { tx }, self.task(rx))
     }

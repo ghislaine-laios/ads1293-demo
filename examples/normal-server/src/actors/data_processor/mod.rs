@@ -58,7 +58,7 @@ impl DataProcessorBuilder {
             })
             .await?;
 
-        let (launched_data_saver, _data_saver_join_handle) = self.data_saver.launch();
+        let (launched_data_saver, _data_saver_join_handle) = self.data_saver.launch(None);
 
         let (launched_watch_dog, timeout_handle) = self.watch_dog.launch();
 

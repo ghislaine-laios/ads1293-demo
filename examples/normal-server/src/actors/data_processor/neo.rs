@@ -56,7 +56,10 @@ impl ReceiveDataFromHardware {
         payload: Payload,
         db_coon: DatabaseConnection,
         launched_service_broadcast_manager: LaunchedServiceBroadcastManager,
-    ) -> Result<ProcessorBeforeLaunched<ReceiveDataFromHardware, NoSubtask>, DbErr> {
+    ) -> Result<
+        ProcessorBeforeLaunched<ReceiveDataFromHardware, impl Future<Output = Result<(), DbErr>>>,
+        DbErr,
+    > {
         let data_transaction = Mutation(db_coon.clone())
             .insert_data_transaction(ActiveModel {
                 start_time: Set(chrono::Local::now().naive_local()),
@@ -64,7 +67,7 @@ impl ReceiveDataFromHardware {
             })
             .await?;
 
-        let (launched_data_saver, _data_join_handle) = DataSaver::new(db_coon).launch();
+        let (launched_data_saver, data_saver_fut) = DataSaver::new(db_coon).launch_inline(Some(60));
 
         Ok(Processor::new::<15, 1>(
             payload,
@@ -74,7 +77,7 @@ impl ReceiveDataFromHardware {
                     data_transaction,
                     launched_data_saver,
                 },
-                subtask: NoSubtask,
+                subtask: data_saver_fut,
             },
         ))
     }
