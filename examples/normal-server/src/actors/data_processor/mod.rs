@@ -108,7 +108,7 @@ impl ContextHandler<Data> for ReceiveDataFromHardware {
 
     async fn handle_with_context(
         &mut self,
-        context: &mut Self::Context,
+        _context: &mut Self::Context,
         data: Data,
     ) -> Self::Output {
         log::trace!("data: {:?}", data);

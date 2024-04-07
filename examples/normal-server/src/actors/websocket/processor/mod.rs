@@ -74,6 +74,7 @@ where
         let error = {
             let process_incoming_raw = async {
                 while let Some(bytes) = raw_incoming_rx.recv().await {
+                    self.watch_dog.do_notify_alive().await.unwrap();
                     self.websocket_context
                         .handle_raw(bytes, &mut self.process_data_handler)
                         .await

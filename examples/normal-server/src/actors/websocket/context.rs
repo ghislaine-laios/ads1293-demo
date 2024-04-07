@@ -151,7 +151,7 @@ impl WebsocketContext {
         }
     }
 
-    async fn send_to_peer(&mut self, msg: ws::Message) -> Result<(), SendToPeerError> {
+    pub async fn send_to_peer(&mut self, msg: ws::Message) -> Result<(), SendToPeerError> {
         let status = if matches!(msg, ws::Message::Close(_)) {
             match self.status {
                 ConnectionStatus::Activated => ConnectionStatus::SeverRequestClosing,
