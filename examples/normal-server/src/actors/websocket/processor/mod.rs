@@ -13,26 +13,12 @@ use futures::{Future, TryFutureExt};
 use std::fmt::Debug;
 use tokio::{select, sync::mpsc};
 
+pub mod actions;
 mod before_launched;
+mod processing_error;
 pub use self::ProcessorAfterLaunched as Processor;
 pub use before_launched::*;
-
-#[derive(Debug, thiserror::Error)]
-pub enum ProcessingError {
-    #[error("failed to feed raw data")]
-    FeedRawDataError(FeedRawDataError),
-
-    #[error("the started hook of the process data handler ended with error")]
-    StartProcessingDataFailed(Box<dyn Debug>),
-    #[error("failed to process the data by the ws context")]
-    ProcessDataFailed(super::context::ProcessingError),
-    #[error("the stopping hook of the process data handler ended with error")]
-    StopProcessingDataFailed(Box<dyn Debug>),
-    #[error("the subtask ended with error")]
-    SubtaskError(Box<dyn Debug>),
-    #[error("an unknown internal bug occurred")]
-    InternalBug(anyhow::Error),
-}
+pub use processing_error::ProcessingError;
 pub struct ProcessorAfterLaunched<P>
 where
     P: WebsocketHandler<Context = WebsocketContext>,
@@ -51,7 +37,7 @@ where
         raw_data_stream: web::Payload,
         watch_dog: impl Future<Output = Option<Timeout>>,
         sub_task: S,
-    ) -> Result<(), ProcessingError>
+    ) -> Result<(), ProcessingError<P>>
     where
         S: Subtask,
     {
@@ -69,7 +55,7 @@ where
         self.process_data_handler
             .handle(Started)
             .await
-            .map_err(|e| ProcessingError::StartProcessingDataFailed(Box::new(e)))?;
+            .map_err(|e| ProcessingError::StartProcessingDataFailed(e))?;
 
         let error = {
             let process_incoming_raw = async {
@@ -113,7 +99,7 @@ where
         self.process_data_handler
             .handle(Stopping)
             .await
-            .map_err(|e| ProcessingError::StopProcessingDataFailed(Box::new(e)))?;
+            .map_err(|e| ProcessingError::StopProcessingDataFailed(e))?;
 
         if let Some(e) = error {
             Err(e)
@@ -130,13 +116,4 @@ where
     fn drop(&mut self) {
         log::debug!("A websocket processor is dropped")
     }
-}
-
-pub mod actions {
-
-    #[derive(Debug)]
-    pub struct Started;
-
-    #[derive(Debug)]
-    pub struct Stopping;
 }

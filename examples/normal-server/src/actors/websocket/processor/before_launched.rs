@@ -40,7 +40,7 @@ where
     pub fn launch_inline(
         self,
         ws_output_channel_size: Option<usize>,
-    ) -> impl Stream<Item = Result<Bytes, ProcessingError>> {
+    ) -> impl Stream<Item = Result<Bytes, ProcessingError<P>>> {
         let (launched_watch_dog, timeout_fut) = self.watch_dog.launch_inline();
 
         let (ws_sender, ws_receiver) = mpsc::channel(ws_output_channel_size.unwrap_or(8));

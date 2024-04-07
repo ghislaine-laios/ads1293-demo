@@ -23,7 +23,7 @@ pub struct WebsocketContext {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum ProcessingError {
+pub enum ProcessingError<E: Debug> {
     #[error("failed to decode the incoming websocket frame")]
     FrameDecodeFailed(ProtocolError),
     #[error("the incoming websocket frame is not supported")]
@@ -31,7 +31,7 @@ pub enum ProcessingError {
     #[error("failed to send message to the peer")]
     SendToPeerError(SendToPeerError),
     #[error("failed to process the data")]
-    ProcessDataFailed(Box<dyn Debug>),
+    ProcessDataFailed(E),
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -60,7 +60,7 @@ impl WebsocketContext {
         &mut self,
         bytes: Bytes,
         handler: &mut P,
-    ) -> Result<(), ProcessingError>
+    ) -> Result<(), ProcessingError<E>>
     where
         P: ContextHandler<Bytes, Context = Self, Output = Result<(), E>>,
         E: Debug + 'static,
@@ -82,7 +82,7 @@ impl WebsocketContext {
         &mut self,
         handler: &mut P,
         frame: ws::Frame,
-    ) -> Result<(), ProcessingError>
+    ) -> Result<(), ProcessingError<E>>
     where
         P: ContextHandler<Bytes, Context = Self, Output = Result<(), E>>,
         E: Debug + 'static,
@@ -186,7 +186,7 @@ impl WebsocketContext {
         &mut self,
         handler: &mut P,
         bytes: Bytes,
-    ) -> Result<(), ProcessingError>
+    ) -> Result<(), ProcessingError<E>>
     where
         P: ContextHandler<Bytes, Context = Self, Output = Result<(), E>>,
         E: Debug + 'static,
@@ -195,7 +195,7 @@ impl WebsocketContext {
 
         handler
             .handle_with_context(self, bytes)
-            .map_err(|e| ProcessingError::ProcessDataFailed(Box::new(e)))
+            .map_err(|e| ProcessingError::ProcessDataFailed(e))
             .await
     }
 }
