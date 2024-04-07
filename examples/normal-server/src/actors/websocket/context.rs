@@ -3,7 +3,6 @@ use std::fmt::Debug;
 use actix_http::ws::{self, ProtocolError};
 use actix_web::web::{Bytes, BytesMut};
 use futures::TryFutureExt;
-use normal_data::Data;
 use tokio::sync::mpsc;
 use tokio_util::codec::{Decoder, Encoder};
 
@@ -27,8 +26,6 @@ pub struct WebsocketContext {
 pub enum ProcessingError {
     #[error("failed to decode the incoming websocket frame")]
     FrameDecodeFailed(ProtocolError),
-    #[error("failed to decode the data from the text frame")]
-    DataDecodeFailed(serde_json::Error),
     #[error("the incoming websocket frame is not supported")]
     NotSupportedFrame(String),
     #[error("failed to send message to the peer")]
@@ -65,7 +62,7 @@ impl WebsocketContext {
         handler: &mut P,
     ) -> Result<(), ProcessingError>
     where
-        P: ContextHandler<Data, Context = Self, Output = Result<(), E>>,
+        P: ContextHandler<Bytes, Context = Self, Output = Result<(), E>>,
         E: Debug + 'static,
     {
         self.decode_buf.extend_from_slice(&bytes[..]);
@@ -87,7 +84,7 @@ impl WebsocketContext {
         frame: ws::Frame,
     ) -> Result<(), ProcessingError>
     where
-        P: ContextHandler<Data, Context = Self, Output = Result<(), E>>,
+        P: ContextHandler<Bytes, Context = Self, Output = Result<(), E>>,
         E: Debug + 'static,
     {
         log::trace!("frame: {:?}", frame);
@@ -113,9 +110,9 @@ impl WebsocketContext {
 
         match frame {
             actix_http::ws::Frame::Text(text) => {
-                let data =
-                    serde_json::from_slice(&text[..]).map_err(ProcessingError::DataDecodeFailed)?;
-                self.process_data(handler, data).await?;
+                // let data =
+                //     serde_json::from_slice(&text[..]).map_err(ProcessingError::DataDecodeFailed)?;
+                self.process_bytes(handler, text).await?;
 
                 Ok(())
             }
@@ -185,19 +182,19 @@ impl WebsocketContext {
         Ok(())
     }
 
-    async fn process_data<P, E>(
+    async fn process_bytes<P, E>(
         &mut self,
         handler: &mut P,
-        data: Data,
+        bytes: Bytes,
     ) -> Result<(), ProcessingError>
     where
-        P: ContextHandler<Data, Context = Self, Output = Result<(), E>>,
+        P: ContextHandler<Bytes, Context = Self, Output = Result<(), E>>,
         E: Debug + 'static,
     {
-        log::trace!("data: {:?}", data);
+        log::trace!("bytes: {:?}", bytes);
 
         handler
-            .handle_with_context(self, data)
+            .handle_with_context(self, bytes)
             .map_err(|e| ProcessingError::ProcessDataFailed(Box::new(e)))
             .await
     }

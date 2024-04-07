@@ -16,7 +16,7 @@ use crate::{
         data_transaction::{self, ActiveModel},
     },
 };
-use actix_web::web::Payload;
+use actix_web::web::{Bytes, Payload};
 use futures::Future;
 use normal_data::Data;
 use sea_orm::{DatabaseConnection, DbErr, Set};
@@ -42,6 +42,8 @@ pub enum DataProcessingError {
     DataValueOutOfRange(u32, u32),
     #[error("failed to save data using the data saver due to timeout")]
     SaveDataTimeout,
+    #[error("failed to decode the data from the text frame")]
+    DataDecodeFailed(serde_json::Error),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -102,15 +104,18 @@ impl Handler<Started> for ReceiveDataFromHardware {
     }
 }
 
-impl ContextHandler<Data> for ReceiveDataFromHardware {
+impl ContextHandler<Bytes> for ReceiveDataFromHardware {
     type Output = Result<(), DataProcessingError>;
     type Context = WebsocketContext;
 
     async fn handle_with_context(
         &mut self,
         _context: &mut Self::Context,
-        data: Data,
+        bytes: Bytes,
     ) -> Self::Output {
+        let data: Data =
+            serde_json::from_slice(&bytes[..]).map_err(DataProcessingError::DataDecodeFailed)?;
+
         log::trace!("data: {:?}", data);
 
         self.launched_data_saver

@@ -1,5 +1,5 @@
+use actix_web::web::Bytes;
 use core::fmt::Debug;
-use normal_data::Data;
 
 use crate::actors::{handler::ContextHandler, Handler};
 
@@ -8,7 +8,7 @@ use super::processor::actions::{Started, Stopping};
 pub trait WebsocketHandler:
     Handler<Started, Output = Result<(), <Self as WebsocketHandler>::StartedError>>
     + ContextHandler<
-        Data,
+        Bytes,
         Context = <Self as WebsocketHandler>::Context,
         Output = Result<(), <Self as WebsocketHandler>::ProcessDataError>,
     > + Handler<Stopping, Output = Result<(), <Self as WebsocketHandler>::StoppingError>>
@@ -27,7 +27,7 @@ where
 impl<T, TS, TP, TST, Context> WebsocketHandler for T
 where
     T: Handler<Started, Output = Result<(), TS>>
-        + ContextHandler<Data, Context = Context, Output = Result<(), TP>>
+        + ContextHandler<Bytes, Context = Context, Output = Result<(), TP>>
         + Handler<Stopping, Output = Result<(), TST>>
         + Debug,
     TS: Debug + 'static,
