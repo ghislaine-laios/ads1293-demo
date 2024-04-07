@@ -122,7 +122,7 @@ impl<F: Future<Output = Result<(), DbErr>>> WsProcessorWrapper<F> {
     ) -> impl Stream<
         Item = Result<Bytes, super::websocket::processor::ProcessingError<ReceiveDataFromHardware>>,
     > {
-        let (_, rx) = mpsc::channel::<NoActions>(0);
+        let (_, rx) = mpsc::channel::<NoActions>(1);
         self.0.launch_inline(self.1, self.2, rx)
     }
 }
