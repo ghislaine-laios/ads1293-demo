@@ -67,6 +67,7 @@ pub async fn app() -> anyhow::Result<()> {
             .app_data(web::Data::new(launched_data_hub.clone()))
             .app_data(web::Data::new(db_coon.clone()))
             .service(services::data::push_data)
+            .service(services::data::retrieve_data)
     })
     .bind(bind_to)
     .context(format!("failed to bind to {}:{}", bind_to.0, bind_to.1))?

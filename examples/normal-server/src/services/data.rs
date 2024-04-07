@@ -1,7 +1,7 @@
 use crate::{
     actors::{
         data_hub::LaunchedDataHub, data_processor::ReceiveDataFromHardware,
-        service_broadcast_manager::LaunchedServiceBroadcastManager,
+        data_pusher::DataPusher, service_broadcast_manager::LaunchedServiceBroadcastManager,
     },
     errors,
 };
@@ -39,10 +39,29 @@ pub async fn push_data(
     Ok(resp.streaming(stream))
 }
 
+#[get("/data")]
+pub async fn retrieve_data(
+    req: HttpRequest,
+    stream: web::Payload,
+    launched_data_hub: web::Data<LaunchedDataHub>,
+) -> Result<HttpResponse, Error> {
+    let mut resp = actix_web_actors::ws::handshake(&req)?;
+
+    let data_pusher = DataPusher::new_ws_data_pusher(
+        stream,
+        Arc::unwrap_or_clone(launched_data_hub.into_inner()),
+    )
+    .await;
+
+    let stream = data_pusher.launch_inline();
+
+    Ok(resp.streaming(stream))
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{app, settings::Settings};
-    use futures::SinkExt;
+    use futures::{SinkExt, StreamExt};
     use normal_data::Data;
     use std::time::Duration;
     use tokio::select;
@@ -60,10 +79,37 @@ mod tests {
 
         actix_rt::time::sleep(Duration::from_millis(500)).await;
 
+        let port = settings.bind_to.port;
+
+        let listener_task = async move {
+            let (mut socket, resp) = connect_async(
+                Url::parse(format!("ws://localhost:{}/data", port).as_str()).unwrap(),
+            )
+            .await
+            .unwrap();
+
+            dbg!(resp);
+
+            while let Some(item) = socket.next().await {
+                match item {
+                    Ok(item) => {
+                        log::info!("receive item: {:?}", item)
+                    }
+                    Err(e) => {
+                        log::error!("listener task receive error: {:#?}", e);
+                        panic!()
+                    }
+                }
+            }
+        };
+
+        let listener_task = actix_rt::spawn(listener_task);
+
+        let port = settings.bind_to.port;
+
         let client_task = async move {
             let (mut socket, resp) = connect_async(
-                Url::parse(format!("ws://localhost:{}/push-data", settings.bind_to.port).as_str())
-                    .unwrap(),
+                Url::parse(format!("ws://localhost:{}/push-data", port).as_str()).unwrap(),
             )
             .await
             .unwrap();
@@ -90,6 +136,7 @@ mod tests {
             socket.flush().await.unwrap();
 
             for i in 0..60 {
+                data_arr[i].id += total_num;
                 socket
                     .send(Text(serde_json::to_string(&data_arr[i]).unwrap()))
                     .await
@@ -107,8 +154,13 @@ mod tests {
                 }
             },
             r = client_task => {
-                if let Err(e) = r{
+                if let Err(e) = r {
                     panic!("client task panicked: {:#?}", e)
+                }
+            }
+            r = listener_task => {
+                if let Err(e) = r {
+                    panic!("listener task panicked: {:#?}", e)
                 }
             }
         }
