@@ -3,9 +3,6 @@ name = "normal-server"
 version = "0.1.0"
 edition = "2021"
 
-[workspace]
-members = ["migration"]
-
 [dependencies]
 actix = "0.13.3"
 actix-http = "3.6.0"

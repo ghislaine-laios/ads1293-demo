@@ -69,6 +69,7 @@ pub async fn app() -> anyhow::Result<()> {
             .service(services::data::push_data)
             .service(services::data::retrieve_data)
     })
+    .workers(2)
     .bind(bind_to)
     .context(format!("failed to bind to {}:{}", bind_to.0, bind_to.1))?
     .run();
