@@ -19,18 +19,11 @@
     },
     "windows": [
       {
-        "label": "main",
-        "title": "normal-app",
-        "width": 800,
-        "height": 600,
-        "url": "/"
-      },
-      {
         "label": "chart-demo",
         "title": "Chart Demo",
-        "width": 800,
+        "width": 1000,
         "height": 600,
-        "url": "/chat-demo"
+        "url": "/chart-demo"
       }
     ],
     "security": {
