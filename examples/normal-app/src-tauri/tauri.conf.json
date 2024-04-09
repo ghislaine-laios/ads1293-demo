@@ -22,14 +22,15 @@
         "label": "main",
         "title": "normal-app",
         "width": 800,
-        "height": 600
+        "height": 600,
+        "url": "/"
       },
       {
-        "label": "zhihu",
-        "title": "知乎",
+        "label": "chart-demo",
+        "title": "Chart Demo",
         "width": 800,
         "height": 600,
-        "url": "https://zhihu.com"
+        "url": "/chat-demo"
       }
     ],
     "security": {
