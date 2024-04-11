@@ -2,7 +2,7 @@ use crate::actors::handler::ContextHandler;
 use actix_http::ws::{self, ProtocolError};
 use actix_web::web::{Bytes, BytesMut};
 use futures::TryFutureExt;
-use std::fmt::Debug;
+use std::{backtrace::Backtrace, fmt::Debug};
 use tokio::sync::mpsc;
 use tokio_util::codec::{Decoder, Encoder};
 

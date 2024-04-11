@@ -3,7 +3,7 @@ use tokio::sync::mpsc;
 
 use crate::actors::data_processor::DataProcessorId;
 
-use super::actions::{Action, NewData};
+use super::actions::{Action, Close, NewData};
 
 #[derive(Debug, Clone)]
 pub struct LaunchedDataPusher {
@@ -19,5 +19,9 @@ impl LaunchedDataPusher {
         self.tx
             .send(Action::NewData(NewData(processor_id, data)))
             .await
+    }
+
+    pub async fn close(&self) -> Result<(), mpsc::error::SendError<Action>> {
+        self.tx.send(Action::Close(Close)).await
     }
 }

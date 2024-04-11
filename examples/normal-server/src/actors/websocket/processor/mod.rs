@@ -1,3 +1,5 @@
+use std::any::type_name;
+
 use self::actions::{ActorAction, Started, Stopping};
 use super::{context::WebsocketContext, subtask::Subtask, websocket_handler::WebsocketHandler};
 use crate::actors::{
@@ -81,6 +83,7 @@ where
                                         .await
                                         .map_err(|e| ProcessingError::<P>::InternalBug(e))?;
                                     if matches!(handle_result, ActorAction::Break) {
+                                        log::debug!("[handler = {}] Data processing handler broke the loop.", type_name::<P>());
                                         break 'l;
                                     }
                                     false
@@ -107,6 +110,8 @@ where
             };
             actix_rt::pin!(process_incoming_raw);
 
+            log::debug!("[handler = {}] Data processing handler is stopping...", type_name::<P>());
+
             let error = select! {
                 biased;
 
@@ -127,12 +132,12 @@ where
             error
         };
 
-        self.websocket_context.do_close().await;
-
         self.process_data_handler
             .handle(Stopping)
             .await
             .map_err(|e| ProcessingError::StopProcessingDataFailed(e))?;
+
+        self.websocket_context.do_close().await;
 
         if let Some(e) = error {
             Err(e)

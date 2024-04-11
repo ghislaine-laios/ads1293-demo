@@ -2961,7 +2961,6 @@ dependencies = [
  "actix-web",
  "anyhow",
  "env_logger",
- "normal-server",
  "serde",
  "serde_json",
  "tauri",

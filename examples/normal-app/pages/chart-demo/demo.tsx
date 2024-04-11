@@ -4,7 +4,12 @@ import { push_data_url } from "../../src/config";
 import { useEffect } from "react";
 
 export function Demo() {
-  const { lastJsonMessage, readyState } = useWebSocket(push_data_url, {heartbeat: true});
+  const { lastJsonMessage, readyState} = useWebSocket(push_data_url, {heartbeat: {
+    message: "ping",
+    returnMessage: "pong",
+    timeout: 3,
+    interval: 1
+  }});
 
   useEffect(() => {
     console.debug(lastJsonMessage, readyState);

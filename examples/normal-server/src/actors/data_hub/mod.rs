@@ -18,6 +18,7 @@ pub mod handlers;
 pub struct DataHub {
     data_processors: HashSet<DataProcessorId>,
     data_pusher: Option<(DataPusherId, LaunchedDataPusher)>,
+    outdated_data_pusher: Option<(DataPusherId, LaunchedDataPusher)>
 }
 
 impl DataHub {

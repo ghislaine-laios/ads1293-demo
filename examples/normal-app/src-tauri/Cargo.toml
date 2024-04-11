@@ -14,7 +14,7 @@ tauri-build = { version = "1", features = [] }
 tauri = { version = "1", features = ["shell-open"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-normal-server = { path = "../../normal-server" }
+# normal-server = { path = "../../normal-server" }
 env_logger = "0.11.3"
 actix-web = "4.5.1"
 anyhow = "1.0.81"

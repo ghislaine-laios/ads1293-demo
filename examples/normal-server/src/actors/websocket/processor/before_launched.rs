@@ -8,7 +8,7 @@ use crate::actors::{
 };
 use actix_web::web::{self, Bytes};
 use futures::Stream;
-use std::time::Duration;
+use std::{any::type_name, time::Duration};
 use tokio::sync::mpsc::{self, Receiver};
 
 use super::{actions::ActorAction, ProcessingError, Processor};
@@ -58,6 +58,7 @@ impl ProcessorBeforeLaunched {
             fut,
             Some(|e| {
                 log::error!("the processor ended with error: {:?}", e);
+                log::error!("process data handler: {:#?}", type_name::<P>());
                 e
             }),
         )

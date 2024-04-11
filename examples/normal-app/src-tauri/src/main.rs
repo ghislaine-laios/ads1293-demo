@@ -3,7 +3,7 @@
 
 use std::thread;
 
-use normal_server::app;
+// use normal_server::app;
 
 // Learn more about Tauri commands at https://tauri.app/v1/guides/features/command
 #[tauri::command]
@@ -24,7 +24,7 @@ fn main() {
         .expect("error while running tauri application");
 }
 
-#[actix_web::main]
-async fn run_actix_web() -> anyhow::Result<()> {
-    app().await
-}
+// #[actix_web::main]
+// async fn run_actix_web() -> anyhow::Result<()> {
+//     app().await
+// }
