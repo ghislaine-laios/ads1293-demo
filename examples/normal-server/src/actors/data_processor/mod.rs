@@ -39,6 +39,7 @@ mod actions;
 mod id;
 mod mutation;
 mod saver;
+mod handler;
 
 pub use id::*;
 

@@ -20,6 +20,9 @@ pub enum EventLoopInstruction {
     Break,
 }
 
+#[derive(Debug)]
+pub struct NoAction;
+
 #[allow(async_fn_in_trait)]
 pub trait WebsocketActorContextHandler {
     type Action;
@@ -30,7 +33,7 @@ pub trait WebsocketActorContextHandler {
         &mut self,
         context: &mut WebsocketContext,
         error: Option<TaskExecutionError>,
-    ) -> anyhow::Result<(Option<TaskExecutionError>, bool)>;
+    ) -> anyhow::Result<Option<TaskExecutionError>>;
 
     async fn handle_action_with_context(
         &mut self,
@@ -207,10 +210,8 @@ impl<Handler: WebsocketActorContextHandler> WebsocketActorContext<Handler> {
             });
 
         match result {
-            Ok((error, should_close_socket)) => {
-                if should_close_socket {
-                    self.websocket_context.do_close().await;
-                }
+            Ok(error) => {
+                self.websocket_context.do_close().await;
                 match error {
                     Some(error) => Err(error),
                     None => Ok(()),
