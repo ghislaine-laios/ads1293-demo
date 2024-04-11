@@ -4,10 +4,13 @@ use anyhow::Context;
 use normal_data::Data;
 use sea_orm::Set;
 
-use crate::{actors::{
-    data_processor::StopProcessingError,
-    websocket::neo::{NoAction, WebsocketActorContextHandler},
-}, entities::data};
+use crate::{
+    actors::{
+        data_processor::StopProcessingError,
+        websocket::neo::{NoAction, WebsocketActorContextHandler},
+    },
+    entities::data,
+};
 
 use super::{DataProcessingError, ReceiveDataFromHardware, StartProcessingError};
 
@@ -59,10 +62,11 @@ impl WebsocketActorContextHandler for ReceiveDataFromHardware {
 
     async fn handle_bytes_with_context(
         &mut self,
-        context: &mut crate::actors::websocket::neo::websocket_context::WebsocketContext,
+        _: &mut crate::actors::websocket::neo::websocket_context::WebsocketContext,
         bytes: actix_web::web::Bytes,
     ) -> anyhow::Result<crate::actors::websocket::neo::EventLoopInstruction> {
-        let data: Data = serde_json::from_slice(&bytes[..]).map_err(DataProcessingError::DataDecodeFailed)?;
+        let data: Data =
+            serde_json::from_slice(&bytes[..]).map_err(DataProcessingError::DataDecodeFailed)?;
 
         log::trace!(data:serde; "Handle new data from the hardware");
 

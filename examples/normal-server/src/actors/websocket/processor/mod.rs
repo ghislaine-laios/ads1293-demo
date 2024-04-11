@@ -6,10 +6,9 @@ use crate::actors::{
     handler::ContextHandler,
     interval::watch_dog::{LaunchedWatchDog, Timeout},
     websocket::feed_raw_data,
-    Handler,
 };
 use actix_web::web::{self, Bytes};
-use futures::{Future, TryFutureExt};
+use futures::Future;
 use tokio::{select, sync::mpsc};
 
 pub mod actions;

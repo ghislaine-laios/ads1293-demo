@@ -18,25 +18,17 @@ pub async fn push_data(
     launched_data_hub: web::Data<LaunchedDataHub>,
     db_coon: web::Data<DatabaseConnection>,
 ) -> Result<HttpResponse, Error> {
-    let launched_service_broadcast_manager =
-        Arc::unwrap_or_clone(launched_service_broadcast_manager.into_inner());
-
-    let launched_data_hub = Arc::unwrap_or_clone(launched_data_hub.into_inner());
-
-    let mut resp = actix_web_actors::ws::handshake(&req)?;
-
-    let data_processor = ReceiveDataFromHardware::new_ws_processor(
-        stream,
-        Arc::unwrap_or_clone(db_coon.into_inner()),
-        launched_service_broadcast_manager,
-        launched_data_hub,
-    )
-    .await
-    .map_err(|e| e.into())
-    .map_err(errors::Error::InternalError)?;
-
-    let stream = data_processor.launch_inline();
-    Ok(resp.streaming(stream))
+    Ok(actix_web_actors::ws::handshake(&req)?.streaming(
+        ReceiveDataFromHardware::launch_inline(
+            stream,
+            Arc::unwrap_or_clone(db_coon.into_inner()),
+            Arc::unwrap_or_clone(launched_service_broadcast_manager.into_inner()),
+            Arc::unwrap_or_clone(launched_data_hub.into_inner()),
+        )
+        .await
+        .map_err(|e| e.into())
+        .map_err(errors::Error::InternalError)?,
+    ))
 }
 
 #[get("/data")]

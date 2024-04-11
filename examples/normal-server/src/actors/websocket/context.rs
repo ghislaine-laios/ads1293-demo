@@ -56,12 +56,6 @@ impl WebsocketContext {
         }
     }
 
-    pub(super) async fn handle_raw<Handler>(&mut self, handler: &mut Handler, bytes: Bytes)
-    where
-        Handler: WebsocketActorContextHandler,
-    {
-    }
-
     pub(super) async fn handle_raw_old<P, E>(
         &mut self,
         bytes: Bytes,

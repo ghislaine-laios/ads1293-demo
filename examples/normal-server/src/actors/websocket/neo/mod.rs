@@ -194,11 +194,16 @@ impl<Handler: WebsocketActorContextHandler> WebsocketActorContext<Handler> {
         let error = tokio::select! {
             biased;
 
-            end = process_incoming_raw_fut => end.err(),
+            end = process_incoming_raw_fut => {
+                log::debug!(data_processing_handler_info:?; "The incoming channel is closed.");
+                end.err()
+            },
             end = feed_raw_data_fut => end.map_err(map_feed_raw_data_error).err(),
             end = subtask => end.map_err(map_subtask_error).err(),
             _ = watch_dog_fut => None
         };
+
+        log::debug!(error:?, data_processing_handler_info:?; "A websocket actor context is stopping...");
 
         let result = self
             .data_processing_handler

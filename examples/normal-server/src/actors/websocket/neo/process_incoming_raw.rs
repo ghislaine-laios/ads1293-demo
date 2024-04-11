@@ -49,7 +49,10 @@ pub(super) async fn process_incoming_raw<Handler: WebsocketActorContextHandler>(
             biased;
 
             bytes = raw_incoming_rx.recv() => {
-                let Some(bytes) = bytes else { break 'event_loop };
+                let Some(bytes) = bytes else {
+                    log::debug!(data_processing_handler_info:?; "The raw_incoming_rx has closed.");
+                    break 'event_loop
+                };
                 watch_dog.do_notify_alive().await.unwrap();
                 let handle_result = websocket_context
                     .handle_raw(data_processing_handler, bytes)
@@ -61,7 +64,7 @@ pub(super) async fn process_incoming_raw<Handler: WebsocketActorContextHandler>(
             action = action_rx_wrapper => {
                 let Some(action) = action else {
                     rx_closed = true;
-                    break 'event_loop;
+                    continue 'event_loop
                 };
                 let handle_result = data_processing_handler
                     .handle_action_with_context(websocket_context, action)
