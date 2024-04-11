@@ -74,16 +74,21 @@ impl LaunchedDataHub {
 
     pub async fn register_data_pusher(
         &self,
-        action: RegisterDataPusher,
+        id: DataPusherId,
+        launched: LaunchedDataPusher,
     ) -> Result<(), mpsc::error::SendError<Action>> {
-        self.tx.send(Action::RegisterDataPusher(action)).await
+        self.tx
+            .send(Action::RegisterDataPusher(RegisterDataPusher(id, launched)))
+            .await
     }
 
     pub async fn unregister_data_pusher(
         &self,
-        action: UnRegisterDataPusher,
+        id: DataPusherId,
     ) -> Result<(), mpsc::error::SendError<Action>> {
-        self.tx.send(Action::UnRegisterDataPusher(action)).await
+        self.tx
+            .send(Action::UnRegisterDataPusher(UnRegisterDataPusher(id)))
+            .await
     }
 
     pub async fn new_data_from_processor(

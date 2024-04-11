@@ -6,8 +6,6 @@ use std::fmt::Debug;
 use tokio::sync::mpsc;
 use tokio_util::codec::{Decoder, Encoder};
 
-use super::neo::WebsocketActorContextHandler;
-
 #[derive(Clone, Copy, Debug)]
 pub enum ConnectionStatus {
     Activated,

@@ -39,15 +39,10 @@ pub async fn retrieve_data(
 ) -> Result<HttpResponse, Error> {
     let mut resp = actix_web_actors::ws::handshake(&req)?;
 
-    let data_pusher = DataPusher::new_ws_data_pusher(
-        stream,
-        Arc::unwrap_or_clone(launched_data_hub.into_inner()),
-    )
-    .await;
-
-    let stream = data_pusher.launch_inline();
-
-    Ok(resp.streaming(stream))
+    Ok(resp.streaming(
+        DataPusher::launch_inline(stream, Arc::unwrap_or_clone(launched_data_hub.into_inner()))
+            .await,
+    ))
 }
 
 #[cfg(test)]
