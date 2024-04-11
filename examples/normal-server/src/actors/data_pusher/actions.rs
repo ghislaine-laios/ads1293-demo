@@ -5,7 +5,7 @@ use crate::actors::data_processor::DataProcessorId;
 #[derive(Debug)]
 pub enum Action {
     NewData(NewData),
-    Close(Close)
+    Close(Close),
 }
 
 #[derive(Debug)]

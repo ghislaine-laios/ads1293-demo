@@ -3,7 +3,10 @@ use super::{
     handler::ContextHandler,
     websocket::{
         context::WebsocketContext,
-        processor::{actions::{ActorAction, NoActions}, new_ws_processor},
+        processor::{
+            actions::{ActorAction, NoActions},
+            new_ws_processor,
+        },
     },
 };
 use crate::{

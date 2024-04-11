@@ -4,10 +4,9 @@ members = [
     "packages/proc-macros",
     "packages/proc-traits",
     "examples/normal-app/src-tauri",
-    "examples/normal-server",
-    "examples/normal-server/migration"
+
 ]
-exclude = ["examples/normal",  ]
+exclude = ["examples/normal", "examples/normal-server"]
 
 [package]
 name = "ads1293-demo"

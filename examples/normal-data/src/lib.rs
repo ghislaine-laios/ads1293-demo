@@ -35,11 +35,14 @@ impl ServiceMessage {
     pub fn deserialize_from_json(slice: &[u8]) -> Result<ServiceMessage, serde_json::Error> {
         serde_json::from_slice::<ServiceMessage>(slice)
     }
-} 
+}
 
 #[cfg(test)]
 mod tests {
-    use crate::{Data, ServiceMessage, DATA_SERIALIZE_MAX_LEN, SERVICE_MESSAGE_SERIALIZE_MAX_LEN, SERVICE_NAME};
+    use crate::{
+        Data, ServiceMessage, DATA_SERIALIZE_MAX_LEN, SERVICE_MESSAGE_SERIALIZE_MAX_LEN,
+        SERVICE_NAME,
+    };
 
     #[test]
     fn test_sufficient_serialize_max_len() {

@@ -1,37 +1,26 @@
-use crate::actors::handler::ContextHandler;
+use super::{EventLoopInstruction, WebsocketActorContextHandler};
+use crate::actors::websocket::{context::ConnectionStatus, neo::DataProcessingHandlerInfo};
 use actix_http::ws::{self, ProtocolError};
 use actix_web::web::{Bytes, BytesMut};
 use futures::TryFutureExt;
-use std::fmt::Debug;
+use log::{LevelFilter, STATIC_MAX_LEVEL};
 use tokio::sync::mpsc;
 use tokio_util::codec::{Decoder, Encoder};
 
-use super::neo::WebsocketActorContextHandler;
-
-#[derive(Clone, Copy, Debug)]
-pub enum ConnectionStatus {
-    Activated,
-    SeverRequestClosing,
-    PeerRequestClosing,
-    Closed,
-}
-pub struct WebsocketContext {
-    decode_buf: BytesMut,
-    codec: ws::Codec,
-    status: ConnectionStatus,
-    ws_sender: mpsc::Sender<Bytes>,
-}
-
 #[derive(Debug, thiserror::Error)]
-pub enum ProcessingError<E: Debug> {
+pub enum WebsocketDataProcessingError {
     #[error("failed to decode the incoming websocket frame")]
-    FrameDecodeFailed(ProtocolError),
-    #[error("the incoming websocket frame is not supported")]
-    NotSupportedFrame(String),
+    FrameDecodeFailed {
+        #[source]
+        source: ProtocolError,
+        raw: Bytes,
+    },
+    #[error("the incoming websocket frame \"{}\" is not supported", .r#type)]
+    NotSupportedFrame { r#type: &'static str },
     #[error("failed to send message to the peer")]
-    SendToPeerError(SendToPeerError),
-    #[error("failed to process the data")]
-    ProcessDataFailed(E),
+    SendToPeerError(#[source] SendToPeerError),
+    #[error("the handler failed to process the bytes")]
+    BytesProcessingFailed(#[source] anyhow::Error),
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -46,6 +35,13 @@ pub enum SendToPeerError {
     EncodingFailed(ws::ProtocolError),
 }
 
+pub struct WebsocketContext {
+    decode_buf: BytesMut,
+    codec: ws::Codec,
+    status: ConnectionStatus,
+    ws_sender: mpsc::Sender<Bytes>,
+}
+
 impl WebsocketContext {
     pub fn new(ws_sender: mpsc::Sender<Bytes>) -> Self {
         Self {
@@ -56,44 +52,48 @@ impl WebsocketContext {
         }
     }
 
-    pub(super) async fn handle_raw<Handler>(&mut self, handler: &mut Handler, bytes: Bytes)
+    pub(super) async fn handle_raw<Handler>(
+        &mut self,
+        handler: &mut Handler,
+        bytes: Bytes,
+    ) -> Result<EventLoopInstruction, WebsocketDataProcessingError>
     where
         Handler: WebsocketActorContextHandler,
     {
-    }
-
-    pub(super) async fn handle_raw_old<P, E>(
-        &mut self,
-        bytes: Bytes,
-        handler: &mut P,
-    ) -> Result<(), ProcessingError<E>>
-    where
-        P: ContextHandler<Bytes, Context = Self, Output = Result<(), E>>,
-        E: Debug + 'static,
-    {
         self.decode_buf.extend_from_slice(&bytes[..]);
 
-        while let Some(frame) = self
-            .codec
-            .decode(&mut self.decode_buf)
-            .map_err(ProcessingError::FrameDecodeFailed)?
-        {
-            self.handle_frame(handler, frame).await?;
+        loop {
+            let frame = match self.codec.decode(&mut self.decode_buf) {
+                Ok(r) => r,
+                Err(e) => {
+                    return Err(WebsocketDataProcessingError::FrameDecodeFailed {
+                        source: e,
+                        raw: bytes,
+                    })
+                }
+            };
+
+            let Some(frame) = frame else { break };
+
+            let event_loop_instruction = self.handle_frame(handler, frame).await?;
+
+            if matches!(event_loop_instruction, EventLoopInstruction::Break) {
+                return Ok(event_loop_instruction);
+            }
         }
 
-        Ok(())
+        Ok(EventLoopInstruction::Continue)
     }
 
-    async fn handle_frame<P, E>(
+    async fn handle_frame<Handler>(
         &mut self,
-        handler: &mut P,
+        handler: &mut Handler,
         frame: ws::Frame,
-    ) -> Result<(), ProcessingError<E>>
+    ) -> Result<EventLoopInstruction, WebsocketDataProcessingError>
     where
-        P: ContextHandler<Bytes, Context = Self, Output = Result<(), E>>,
-        E: Debug + 'static,
+        Handler: WebsocketActorContextHandler,
     {
-        log::trace!("frame: {:?}", frame);
+        log::trace!(frame:?; "New frame received.");
 
         match self.status {
             ConnectionStatus::Activated => {}
@@ -105,34 +105,31 @@ impl WebsocketContext {
             ConnectionStatus::PeerRequestClosing => {
                 // After the peer sends the close frame,
                 // anything sent by the peer will be ignored.
-                return Ok(());
+                return Ok(EventLoopInstruction::Continue);
             }
             ConnectionStatus::Closed => {
                 // Both ends have reached consensus;
                 // anything sent after that will be ignored.
-                return Ok(());
+                return Ok(EventLoopInstruction::Continue);
             }
-        }
+        };
 
         match frame {
-            actix_http::ws::Frame::Text(text) => {
-                // let data =
-                //     serde_json::from_slice(&text[..]).map_err(ProcessingError::DataDecodeFailed)?;
-                self.process_bytes(handler, text).await?;
-
-                Ok(())
-            }
+            actix_http::ws::Frame::Text(text) => self.process_bytes(handler, text).await,
             actix_http::ws::Frame::Binary(_) => {
-                Err(ProcessingError::NotSupportedFrame("binary".to_string()))
+                Err(WebsocketDataProcessingError::NotSupportedFrame { r#type: "binary" })
             }
-            actix_http::ws::Frame::Continuation(_) => Err(ProcessingError::NotSupportedFrame(
-                "continuation".to_string(),
-            )),
+            actix_http::ws::Frame::Continuation(_) => {
+                Err(WebsocketDataProcessingError::NotSupportedFrame {
+                    r#type: "continuation",
+                })
+            }
             actix_http::ws::Frame::Ping(msg) => self
                 .send_to_peer(ws::Message::Pong(msg))
                 .await
-                .map_err(ProcessingError::SendToPeerError),
-            actix_http::ws::Frame::Pong(_) => Ok(()),
+                .map(|_| EventLoopInstruction::Continue)
+                .map_err(WebsocketDataProcessingError::SendToPeerError),
+            actix_http::ws::Frame::Pong(_) => Ok(EventLoopInstruction::Continue),
             actix_http::ws::Frame::Close(_) => {
                 let r = match self.status {
                     ConnectionStatus::Activated => {
@@ -149,12 +146,37 @@ impl WebsocketContext {
                     }
                 };
 
-                r.map_err(ProcessingError::SendToPeerError)
+                r.map(|_| EventLoopInstruction::Continue)
+                    .map_err(WebsocketDataProcessingError::SendToPeerError)
             }
         }
     }
 
+    async fn process_bytes<Handler>(
+        &mut self,
+        handler: &mut Handler,
+        bytes: Bytes,
+    ) -> Result<EventLoopInstruction, WebsocketDataProcessingError>
+    where
+        Handler: WebsocketActorContextHandler,
+    {
+        if STATIC_MAX_LEVEL >= LevelFilter::Trace {
+            let data_processing_handler_info = DataProcessingHandlerInfo::new(handler);
+            log::trace! {
+                data_processing_handler_info:serde, raw_bytes:? = bytes;
+                "Raw bytes is about to be processed by the handler."
+            };
+        }
+
+        handler
+            .handle_bytes_with_context(self, bytes)
+            .await
+            .map_err(WebsocketDataProcessingError::BytesProcessingFailed)
+    }
+
     pub async fn send_to_peer(&mut self, msg: ws::Message) -> Result<(), SendToPeerError> {
+        log::trace!(msg:?; "Send message to the peer.");
+
         let status = if matches!(msg, ws::Message::Close(_)) {
             match self.status {
                 ConnectionStatus::Activated => ConnectionStatus::SeverRequestClosing,
@@ -197,22 +219,5 @@ impl WebsocketContext {
         }
 
         let _r = self.send_to_peer(ws::Message::Close(None)).await;
-    }
-
-    async fn process_bytes<P, E>(
-        &mut self,
-        handler: &mut P,
-        bytes: Bytes,
-    ) -> Result<(), ProcessingError<E>>
-    where
-        P: ContextHandler<Bytes, Context = Self, Output = Result<(), E>>,
-        E: Debug + 'static,
-    {
-        log::trace!("bytes: {:?}", bytes);
-
-        handler
-            .handle_with_context(self, bytes)
-            .map_err(|e| ProcessingError::ProcessDataFailed(e))
-            .await
     }
 }

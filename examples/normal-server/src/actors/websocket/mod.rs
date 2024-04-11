@@ -9,6 +9,7 @@ use tokio::{
 };
 
 pub mod context;
+pub mod neo;
 pub mod processor;
 pub mod subtask;
 pub mod websocket_handler;

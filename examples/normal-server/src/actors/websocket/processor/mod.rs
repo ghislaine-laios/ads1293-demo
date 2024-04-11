@@ -70,7 +70,7 @@ where
                             bytes = raw_incoming_rx.recv() => {
                                 let Some(bytes) = bytes else {break};
                                 self.websocket_context
-                                .handle_raw(bytes, &mut self.process_data_handler)
+                                .handle_raw_old(bytes, &mut self.process_data_handler)
                                 .await
                                 .map_err(|e| ProcessingError::ProcessDataFailed(e))?;
                                 false
@@ -94,7 +94,7 @@ where
                         while let Some(bytes) = raw_incoming_rx.recv().await {
                             self.watch_dog.do_notify_alive().await.unwrap();
                             self.websocket_context
-                                .handle_raw(bytes, &mut self.process_data_handler)
+                                .handle_raw_old(bytes, &mut self.process_data_handler)
                                 .await
                                 .map_err(|e| ProcessingError::ProcessDataFailed(e))?;
                         }
@@ -110,7 +110,10 @@ where
             };
             actix_rt::pin!(process_incoming_raw);
 
-            log::debug!("[handler = {}] Data processing handler is stopping...", type_name::<P>());
+            log::debug!(
+                "[handler = {}] Data processing handler is stopping...",
+                type_name::<P>()
+            );
 
             let error = select! {
                 biased;
