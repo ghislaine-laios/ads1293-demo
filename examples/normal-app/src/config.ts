@@ -1,0 +1,1 @@
+export const push_data_url = "ws://localhost:20271/data"

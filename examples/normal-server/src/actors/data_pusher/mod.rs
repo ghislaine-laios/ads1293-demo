@@ -1,4 +1,4 @@
-use self::actions::{Action, NewData};
+use self::actions::{Action, Close, NewData};
 
 use super::{
     data_hub::{
@@ -128,7 +128,24 @@ impl ContextHandler<Action> for DataPusher {
         context: &mut Self::Context,
         action: Action,
     ) -> Self::Output {
-        let Action::NewData(NewData(processor_id, data)) = action;
+        match action {
+            Action::NewData(action) => self.handle_with_context(context, action).await,
+            Action::Close(_) => todo!(),
+        }
+    }
+}
+
+impl ContextHandler<NewData> for DataPusher {
+    type Output = Result<(), anyhow::Error>;
+
+    type Context = WebsocketContext;
+
+    async fn handle_with_context(
+        &mut self,
+        context: &mut Self::Context,
+        action: NewData,
+    ) -> Self::Output {
+        let NewData(processor_id, data) = action;
         let bytes = serde_json::to_string(&(processor_id, data))
             .context("failed to serialize the given data into json")?;
         context
@@ -137,5 +154,15 @@ impl ContextHandler<Action> for DataPusher {
             .context("failed to push data")?;
 
         Ok(())
+    }
+}
+
+impl ContextHandler<Close> for DataPusher {
+    type Output = Result<(), anyhow::Error>;
+
+    type Context = WebsocketContext;
+
+    async fn handle_with_context(&mut self, context: &mut Self::Context, _: Close) -> Self::Output {
+        Ok(context.do_close().await)
     }
 }

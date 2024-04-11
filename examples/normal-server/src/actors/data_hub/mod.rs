@@ -41,6 +41,12 @@ impl DataHub {
     }
 }
 
+impl Drop for DataHub {
+    fn drop(&mut self) {
+        log::debug!("A data hub is dropped")
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct LaunchedDataHub {
     tx: mpsc::Sender<actions::Action>,

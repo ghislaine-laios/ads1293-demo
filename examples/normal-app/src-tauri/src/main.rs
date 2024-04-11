@@ -16,7 +16,7 @@ fn main() {
 
     tauri::Builder::default()
         .setup(|app| {
-            thread::spawn(move || run_actix_web().unwrap());
+            // thread::spawn(move || run_actix_web().unwrap());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![greet])

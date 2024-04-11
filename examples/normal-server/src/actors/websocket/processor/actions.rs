@@ -6,3 +6,10 @@ pub struct Stopping;
 
 #[derive(Debug)]
 pub struct NoActions;
+
+
+#[derive(Debug)]
+pub enum ActorAction {
+    Continue,
+    Break
+}

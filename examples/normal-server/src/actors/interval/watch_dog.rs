@@ -57,7 +57,7 @@ impl WatchDog {
     }
 
     async fn wait_until_timeout(mut self, mut action_receiver: ActionReceiver) -> Option<Timeout> {
-        loop {
+        let result = loop {
             log::trace!("watch dog loop begin.");
             tokio::select! {
                 (alive, now) = self.tick() => {
@@ -77,7 +77,11 @@ impl WatchDog {
                     }
                 }
             }
-        }
+        };
+
+        log::debug!("A watch dog has reached its timeout.");
+
+        result
     }
 
     pub fn notify_alive(&mut self) {

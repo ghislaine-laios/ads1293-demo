@@ -1,6 +1,15 @@
 import { EChart } from "@kbox-labs/react-echarts";
+import useWebSocket from "react-use-websocket";
+import { push_data_url } from "../../src/config";
+import { useEffect } from "react";
 
 export function Demo() {
+  const { lastJsonMessage, readyState } = useWebSocket(push_data_url, {heartbeat: true});
+
+  useEffect(() => {
+    console.debug(lastJsonMessage, readyState);
+  }, [lastJsonMessage, readyState]);
+
   return (
     <main>
       <div className="w-full h-[600px]">
@@ -8,6 +17,12 @@ export function Demo() {
           className="h-full"
           renderer={"canvas"}
           onClick={() => console.log("clicked!")}
+          dataset={{
+            source: [
+              ["2022-10-17", 300],
+              ["2022-10-18", 100],
+            ],
+          }}
           xAxis={{
             type: "category",
           }}
@@ -18,10 +33,6 @@ export function Demo() {
           series={[
             {
               type: "line",
-              data: [
-                ["2022-10-17", 300],
-                ["2022-10-18", 100],
-              ],
             },
           ]}
         />
