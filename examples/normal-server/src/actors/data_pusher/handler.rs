@@ -52,6 +52,8 @@ impl WebsocketActorContextHandler for DataPusher {
         context: &mut crate::actors::websocket::neo::websocket_context::WebsocketContext,
         bytes: actix_web::web::Bytes,
     ) -> anyhow::Result<crate::actors::websocket::neo::EventLoopInstruction> {
+        log::debug!(bytes:?; "Received data from the frontend.");
+
         if bytes.slice(..) == "ping" {
             context
                 .send_to_peer(ws::Message::Text("pong".into()))

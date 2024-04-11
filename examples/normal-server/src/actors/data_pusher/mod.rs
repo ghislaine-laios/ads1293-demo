@@ -1,6 +1,6 @@
 use super::{
     data_hub::LaunchedDataHub,
-    websocket::{neo::WebsocketActorContext, processor::ProcessorBeforeLaunched},
+    websocket::neo::WebsocketActorContext,
 };
 use crate::actors::data_pusher::id::NEXT_DATA_PUSHER_ID;
 use std::time::Duration;
@@ -24,8 +24,6 @@ pub struct DataPusher {
     data_hub: LaunchedDataHub,
     launched_self: LaunchedDataPusher,
 }
-
-pub struct WsDataPusherWrapper(ProcessorBeforeLaunched, DataPusherId, LaunchedDataHub);
 
 impl DataPusher {
     pub async fn launch_inline(

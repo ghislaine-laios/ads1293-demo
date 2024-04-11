@@ -7,8 +7,8 @@ export function Demo() {
   const { lastJsonMessage, readyState} = useWebSocket(push_data_url, {heartbeat: {
     message: "ping",
     returnMessage: "pong",
-    timeout: 3,
-    interval: 1
+    timeout: 3000,
+    interval: 1000
   }});
 
   useEffect(() => {

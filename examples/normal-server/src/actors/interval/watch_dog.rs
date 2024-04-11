@@ -15,6 +15,7 @@ pub struct WatchDog {
     ticker: Interval,
 }
 
+#[allow(unused)]
 pub struct Timeout {
     timeout: Duration,
     last_alive: Instant,

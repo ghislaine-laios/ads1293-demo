@@ -1,5 +1,5 @@
 use self::websocket_context::{WebsocketContext, WebsocketDataProcessingError};
-use super::{subtask::Subtask, FeedRawDataError};
+use super::FeedRawDataError;
 use crate::actors::{
     interval::watch_dog::WatchDog,
     websocket::{
@@ -198,9 +198,18 @@ impl<Handler: WebsocketActorContextHandler> WebsocketActorContext<Handler> {
                 log::debug!(data_processing_handler_info:?; "The incoming channel is closed.");
                 end.err()
             },
-            end = feed_raw_data_fut => end.map_err(map_feed_raw_data_error).err(),
-            end = subtask => end.map_err(map_subtask_error).err(),
-            _ = watch_dog_fut => None
+            end = feed_raw_data_fut => {
+                log::debug!(data_processing_handler_info:?; "The raw data feeder is closed.");
+                end.map_err(map_feed_raw_data_error).err()
+            },
+            end = subtask => {
+                log::debug!(data_processing_handler_info:?; "The subtask has ended.");
+                end.map_err(map_subtask_error).err()
+            },
+            _ = watch_dog_fut => {
+                log::debug!(data_processing_handler_info:?; "The timeout has been reached.");
+                None
+            }
         };
 
         log::debug!(error:?, data_processing_handler_info:?; "A websocket actor context is stopping...");

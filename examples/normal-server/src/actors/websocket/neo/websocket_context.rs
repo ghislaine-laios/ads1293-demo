@@ -2,7 +2,6 @@ use super::{EventLoopInstruction, WebsocketActorContextHandler};
 use crate::actors::websocket::{context::ConnectionStatus, neo::DataProcessingHandlerInfo};
 use actix_http::ws::{self, ProtocolError};
 use actix_web::web::{Bytes, BytesMut};
-use futures::TryFutureExt;
 use log::{LevelFilter, STATIC_MAX_LEVEL};
 use tokio::sync::mpsc;
 use tokio_util::codec::{Decoder, Encoder};
