@@ -1,4 +1,4 @@
-use self::actions::{Started, Stopping};
+use self::actions::{ActorAction, Started, Stopping};
 use super::{context::WebsocketContext, subtask::Subtask, websocket_handler::WebsocketHandler};
 use crate::actors::{
     handler::ContextHandler,
@@ -39,7 +39,7 @@ where
     ) -> Result<(), ProcessingError<P>>
     where
         S: Subtask,
-        P: ContextHandler<A, Context = WebsocketContext, Output = anyhow::Result<()>>,
+        P: ContextHandler<A, Context = WebsocketContext, Output = anyhow::Result<ActorAction>>,
     {
         log::debug!("new websocket processor (actor) started");
         let (raw_incoming_tx, mut raw_incoming_rx) = mpsc::channel::<Bytes>(1);
@@ -60,7 +60,7 @@ where
         let error = {
             let process_incoming_raw = async {
                 let mut action_rx = action_rx;
-                loop {
+                'l: loop {
                     let rx_closed = if let Some(rx) = &mut action_rx {
                         select! {
                             biased;
@@ -76,10 +76,13 @@ where
                             action = rx.recv() => {
                                 'b: {
                                     let Some(action) = action else {break 'b true};
-                                    self.process_data_handler.handle_with_context(
+                                    let handle_result = self.process_data_handler.handle_with_context(
                                         &mut self.websocket_context, action)
                                         .await
                                         .map_err(|e| ProcessingError::<P>::InternalBug(e))?;
+                                    if matches!(handle_result, ActorAction::Break) {
+                                        break 'l;
+                                    }
                                     false
                                 }
                             }

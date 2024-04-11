@@ -3,7 +3,7 @@ use super::{
     handler::ContextHandler,
     websocket::{
         context::WebsocketContext,
-        processor::{actions::NoActions, new_ws_processor},
+        processor::{actions::{ActorAction, NoActions}, new_ws_processor},
     },
 };
 use crate::{
@@ -195,7 +195,7 @@ impl Handler<Stopping> for ReceiveDataFromHardware {
 }
 
 impl ContextHandler<NoActions> for ReceiveDataFromHardware {
-    type Output = anyhow::Result<()>;
+    type Output = anyhow::Result<ActorAction>;
 
     type Context = WebsocketContext;
 

@@ -9,7 +9,7 @@ use super::{
     websocket::{
         context::WebsocketContext,
         processor::{
-            actions::{Started, Stopping},
+            actions::{ActorAction, Started, Stopping},
             new_ws_processor, ProcessorBeforeLaunched, ProcessorMeta,
         },
         subtask::NoSubtask,
@@ -119,7 +119,7 @@ impl Handler<Stopping> for DataPusher {
 }
 
 impl ContextHandler<Action> for DataPusher {
-    type Output = Result<(), anyhow::Error>;
+    type Output = Result<ActorAction, anyhow::Error>;
 
     type Context = WebsocketContext;
 
@@ -130,13 +130,13 @@ impl ContextHandler<Action> for DataPusher {
     ) -> Self::Output {
         match action {
             Action::NewData(action) => self.handle_with_context(context, action).await,
-            Action::Close(_) => todo!(),
+            Action::Close(action) => self.handle_with_context(context, action).await,
         }
     }
 }
 
 impl ContextHandler<NewData> for DataPusher {
-    type Output = Result<(), anyhow::Error>;
+    type Output = Result<ActorAction, anyhow::Error>;
 
     type Context = WebsocketContext;
 
@@ -153,16 +153,17 @@ impl ContextHandler<NewData> for DataPusher {
             .await
             .context("failed to push data")?;
 
-        Ok(())
+        Ok(ActorAction::Continue)
     }
 }
 
 impl ContextHandler<Close> for DataPusher {
-    type Output = Result<(), anyhow::Error>;
+    type Output = Result<ActorAction, anyhow::Error>;
 
     type Context = WebsocketContext;
 
     async fn handle_with_context(&mut self, context: &mut Self::Context, _: Close) -> Self::Output {
-        Ok(context.do_close().await)
+        context.do_close().await;
+        Ok(ActorAction::Break)
     }
 }

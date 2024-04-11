@@ -11,7 +11,7 @@ use futures::Stream;
 use std::time::Duration;
 use tokio::sync::mpsc::{self, Receiver};
 
-use super::{ProcessingError, Processor};
+use super::{actions::ActorAction, ProcessingError, Processor};
 
 pub struct ProcessorMeta {
     pub watch_dog_timeout_seconds: u64,
@@ -31,7 +31,7 @@ impl ProcessorBeforeLaunched {
         action_rx: Receiver<A>,
     ) -> impl Stream<Item = Result<Bytes, ProcessingError<P>>>
     where
-        P: ContextHandler<A, Context = WebsocketContext, Output = anyhow::Result<()>>,
+        P: ContextHandler<A, Context = WebsocketContext, Output = anyhow::Result<ActorAction>>,
         P: WebsocketHandler<Context = WebsocketContext>,
         S: Subtask,
         <S as Subtask>::OutputError: 'static,
