@@ -84,6 +84,11 @@ impl WebsocketActorContextHandler for ReceiveDataFromHardware {
             .await
             .map_err(|_| DataProcessingError::SaveDataTimeout)?;
 
+        self.launched_data_hub
+            .new_data_from_processor(self.id, data)
+            .await
+            .context("failed to send data to the data hub.")?;
+
         Ok(crate::actors::websocket::actor_context::EventLoopInstruction::Continue)
     }
 

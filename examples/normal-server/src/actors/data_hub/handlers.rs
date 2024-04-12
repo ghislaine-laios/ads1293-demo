@@ -135,13 +135,14 @@ impl Handler<actions::NewDataFromProcessor> for DataHub {
         log::trace!("new data from processor: {:?}", action);
         let NewDataFromProcessor(data_processor_id, data) = action;
         if let Some((id, pusher)) = self.data_pusher.as_ref() {
-            pusher
+            // TODO: Refactor this
+            let _ = pusher
                 .send_data(data_processor_id, data)
                 .await
                 .context(format!(
                     "failed to send data to the data pusher (id = {})",
                     id
-                ))?;
+                )).map_err(|e| log::warn!(e:?;"failed to send data to the data pusher"));
         }
 
         Ok(())

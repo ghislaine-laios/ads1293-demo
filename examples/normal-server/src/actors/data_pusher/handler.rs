@@ -39,6 +39,7 @@ impl WebsocketActorContextHandler for DataPusher {
         context: &mut WebsocketContext,
         action: Self::Action,
     ) -> anyhow::Result<crate::actors::websocket::actor_context::EventLoopInstruction> {
+        log::trace!(action:?; "Received new action.");
         match action {
             Action::NewData(action) => self.handle_new_data(context, action).await,
             Action::Close(action) => self.handle_close(context, action).await,
