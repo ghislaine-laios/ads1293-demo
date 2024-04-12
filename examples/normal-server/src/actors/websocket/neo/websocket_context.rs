@@ -1,10 +1,18 @@
 use super::{EventLoopInstruction, WebsocketActorContextHandler};
-use crate::actors::websocket::{context::ConnectionStatus, neo::DataProcessingHandlerInfo};
+use crate::actors::websocket::neo::DataProcessingHandlerInfo;
 use actix_http::ws::{self, ProtocolError};
 use actix_web::web::{Bytes, BytesMut};
 use log::{LevelFilter, STATIC_MAX_LEVEL};
 use tokio::sync::mpsc;
 use tokio_util::codec::{Decoder, Encoder};
+
+#[derive(Clone, Copy, Debug)]
+pub enum ConnectionStatus {
+    Activated,
+    SeverRequestClosing,
+    PeerRequestClosing,
+    Closed,
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum WebsocketDataProcessingError {
