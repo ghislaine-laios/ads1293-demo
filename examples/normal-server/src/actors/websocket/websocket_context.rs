@@ -1,5 +1,5 @@
-use super::{EventLoopInstruction, WebsocketActorContextHandler};
-use crate::actors::websocket::neo::DataProcessingHandlerInfo;
+use super::actor_context::{EventLoopInstruction, WebsocketActorContextHandler};
+use crate::actors::websocket::actor_context::DataProcessingHandlerInfo;
 use actix_http::ws::{self, ProtocolError};
 use actix_web::web::{Bytes, BytesMut};
 use log::{LevelFilter, STATIC_MAX_LEVEL};

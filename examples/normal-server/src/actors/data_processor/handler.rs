@@ -7,7 +7,7 @@ use sea_orm::Set;
 use crate::{
     actors::{
         data_processor::StopProcessingError,
-        websocket::neo::{NoAction, WebsocketActorContextHandler},
+        websocket::actor_context::{NoAction, WebsocketActorContextHandler},
     },
     entities::data,
 };
@@ -19,7 +19,7 @@ impl WebsocketActorContextHandler for ReceiveDataFromHardware {
 
     async fn started(
         &mut self,
-        _: &mut crate::actors::websocket::neo::websocket_context::WebsocketContext,
+        _: &mut crate::actors::websocket::WebsocketContext,
     ) -> anyhow::Result<()> {
         self.launched_data_hub
             .register_data_processor(self.id)
@@ -36,9 +36,9 @@ impl WebsocketActorContextHandler for ReceiveDataFromHardware {
 
     async fn stopped(
         &mut self,
-        _: &mut crate::actors::websocket::neo::websocket_context::WebsocketContext,
-        error: Option<crate::actors::websocket::neo::TaskExecutionError>,
-    ) -> anyhow::Result<Option<crate::actors::websocket::neo::TaskExecutionError>> {
+        _: &mut crate::actors::websocket::WebsocketContext,
+        error: Option<crate::actors::websocket::actor_context::TaskExecutionError>,
+    ) -> anyhow::Result<Option<crate::actors::websocket::actor_context::TaskExecutionError>> {
         self.launched_data_hub
             .unregister_data_processor(self.id)
             .await
@@ -54,17 +54,17 @@ impl WebsocketActorContextHandler for ReceiveDataFromHardware {
 
     async fn handle_action_with_context(
         &mut self,
-        _: &mut crate::actors::websocket::neo::websocket_context::WebsocketContext,
+        _: &mut crate::actors::websocket::WebsocketContext,
         _: Self::Action,
-    ) -> anyhow::Result<crate::actors::websocket::neo::EventLoopInstruction> {
+    ) -> anyhow::Result<crate::actors::websocket::actor_context::EventLoopInstruction> {
         unreachable!()
     }
 
     async fn handle_bytes_with_context(
         &mut self,
-        _: &mut crate::actors::websocket::neo::websocket_context::WebsocketContext,
+        _: &mut crate::actors::websocket::WebsocketContext,
         bytes: actix_web::web::Bytes,
-    ) -> anyhow::Result<crate::actors::websocket::neo::EventLoopInstruction> {
+    ) -> anyhow::Result<crate::actors::websocket::actor_context::EventLoopInstruction> {
         let data: Data =
             serde_json::from_slice(&bytes[..]).map_err(DataProcessingError::DataDecodeFailed)?;
 
@@ -84,7 +84,7 @@ impl WebsocketActorContextHandler for ReceiveDataFromHardware {
             .await
             .map_err(|_| DataProcessingError::SaveDataTimeout)?;
 
-        Ok(crate::actors::websocket::neo::EventLoopInstruction::Continue)
+        Ok(crate::actors::websocket::actor_context::EventLoopInstruction::Continue)
     }
 
     fn get_id(&self) -> u64 {

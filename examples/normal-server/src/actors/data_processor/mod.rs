@@ -1,4 +1,4 @@
-use super::{data_hub::LaunchedDataHub, websocket::neo::WebsocketActorContext};
+use super::{data_hub::LaunchedDataHub, websocket::actor_context::WebsocketActorContext};
 use crate::{
     actors::service_broadcast_manager::LaunchedServiceBroadcastManager,
     entities::data_transaction::{self, ActiveModel},
@@ -62,7 +62,7 @@ impl ReceiveDataFromHardware {
         launched_service_broadcast_manager: LaunchedServiceBroadcastManager,
         launched_data_hub: LaunchedDataHub,
     ) -> Result<
-        impl Stream<Item = Result<Bytes, super::websocket::neo::TaskExecutionError>>,
+        impl Stream<Item = Result<Bytes, super::websocket::actor_context::TaskExecutionError>>,
         anyhow::Error,
     > {
         let data_transaction = Mutation(db_coon.clone())

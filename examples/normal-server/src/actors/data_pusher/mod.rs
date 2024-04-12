@@ -1,6 +1,6 @@
 use super::{
     data_hub::LaunchedDataHub,
-    websocket::neo::WebsocketActorContext,
+    websocket::actor_context::WebsocketActorContext,
 };
 use crate::actors::data_pusher::id::NEXT_DATA_PUSHER_ID;
 use std::time::Duration;
@@ -29,7 +29,7 @@ impl DataPusher {
     pub async fn launch_inline(
         payload: Payload,
         launched_data_hub: LaunchedDataHub,
-    ) -> impl Stream<Item = Result<Bytes, super::websocket::neo::TaskExecutionError>> {
+    ) -> impl Stream<Item = Result<Bytes, super::websocket::actor_context::TaskExecutionError>> {
         let (action_tx, action_rx) = mpsc::channel(1);
 
         WebsocketActorContext::launch_inline(

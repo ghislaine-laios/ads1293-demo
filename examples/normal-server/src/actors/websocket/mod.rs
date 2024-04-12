@@ -8,7 +8,11 @@ use tokio::{
     task::{JoinError, JoinHandle},
 };
 
-pub mod neo;
+pub mod actor_context;
+pub mod websocket_context;
+
+pub use actor_context::{WebsocketActorContext, WebsocketActorContextHandler};
+pub use websocket_context::WebsocketContext;
 
 #[derive(Debug, thiserror::Error, Clone)]
 pub enum FeedRawDataError {

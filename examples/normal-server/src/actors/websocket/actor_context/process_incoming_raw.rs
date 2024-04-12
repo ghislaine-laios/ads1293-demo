@@ -1,11 +1,12 @@
-use crate::actors::{interval::watch_dog::LaunchedWatchDog, websocket::neo::EventLoopInstruction};
+use crate::actors::{
+    interval::watch_dog::LaunchedWatchDog, websocket::actor_context::EventLoopInstruction,
+};
 use actix_web::web::Bytes;
 use futures::future::pending;
 use tokio::sync::mpsc;
 
 use super::{
-    websocket_context::WebsocketContext, DataProcessingHandlerInfo, TaskExecutionError,
-    WebsocketActorContextHandler,
+    DataProcessingHandlerInfo, TaskExecutionError, WebsocketActorContextHandler, WebsocketContext,
 };
 
 pub(super) async fn process_incoming_raw<Handler: WebsocketActorContextHandler>(

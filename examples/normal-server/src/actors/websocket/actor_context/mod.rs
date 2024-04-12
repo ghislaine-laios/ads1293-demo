@@ -1,9 +1,9 @@
-use self::websocket_context::{WebsocketContext, WebsocketDataProcessingError};
+use super::websocket_context::{WebsocketContext, WebsocketDataProcessingError};
 use super::FeedRawDataError;
 use crate::actors::{
     interval::watch_dog::WatchDog,
     websocket::{
-        feed_raw_data, fut_into_output_stream, neo::process_incoming_raw::process_incoming_raw,
+        feed_raw_data, fut_into_output_stream, actor_context::process_incoming_raw::process_incoming_raw,
     },
 };
 use actix_web::web::{self, Bytes};
@@ -13,7 +13,6 @@ use std::{any::type_name, pin::Pin, time::Duration};
 use tokio::sync::mpsc;
 
 mod process_incoming_raw;
-pub mod websocket_context;
 
 pub enum EventLoopInstruction {
     Continue,
@@ -106,7 +105,7 @@ pub struct DataProcessingHandlerInfo {
 }
 
 impl DataProcessingHandlerInfo {
-    fn new<Handler: WebsocketActorContextHandler>(h: &Handler) -> DataProcessingHandlerInfo {
+    pub(super) fn new<Handler: WebsocketActorContextHandler>(h: &Handler) -> DataProcessingHandlerInfo {
         Self {
             id: h.get_id(),
             r#type: type_name::<Handler>(),
@@ -243,7 +242,7 @@ mod debug_tests {
     use anyhow::anyhow;
 
     use crate::{
-        actors::websocket::neo::{DataProcessingHandlerInfo, TaskExecutionError},
+        actors::websocket::actor_context::{DataProcessingHandlerInfo, TaskExecutionError},
         tests_utils::setup_logger,
     };
 

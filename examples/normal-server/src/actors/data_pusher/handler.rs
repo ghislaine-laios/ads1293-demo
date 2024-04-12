@@ -1,8 +1,9 @@
 use actix_http::ws;
 use anyhow::Context;
 
-use crate::actors::websocket::neo::{
-    websocket_context::WebsocketContext, EventLoopInstruction, WebsocketActorContextHandler,
+use crate::actors::websocket::{
+    actor_context::{EventLoopInstruction, WebsocketActorContextHandler},
+    WebsocketContext,
 };
 
 use super::{
@@ -13,10 +14,7 @@ use super::{
 impl WebsocketActorContextHandler for DataPusher {
     type Action = Action;
 
-    async fn started(
-        &mut self,
-        _: &mut crate::actors::websocket::neo::websocket_context::WebsocketContext,
-    ) -> anyhow::Result<()> {
+    async fn started(&mut self, _: &mut WebsocketContext) -> anyhow::Result<()> {
         self.data_hub
             .register_data_pusher(self.id, self.launched_self.clone())
             .await
@@ -25,9 +23,9 @@ impl WebsocketActorContextHandler for DataPusher {
 
     async fn stopped(
         &mut self,
-        _: &mut crate::actors::websocket::neo::websocket_context::WebsocketContext,
-        error: Option<crate::actors::websocket::neo::TaskExecutionError>,
-    ) -> anyhow::Result<Option<crate::actors::websocket::neo::TaskExecutionError>> {
+        _: &mut WebsocketContext,
+        error: Option<crate::actors::websocket::actor_context::TaskExecutionError>,
+    ) -> anyhow::Result<Option<crate::actors::websocket::actor_context::TaskExecutionError>> {
         self.data_hub
             .unregister_data_pusher(self.id)
             .await
@@ -38,9 +36,9 @@ impl WebsocketActorContextHandler for DataPusher {
 
     async fn handle_action_with_context(
         &mut self,
-        context: &mut crate::actors::websocket::neo::websocket_context::WebsocketContext,
+        context: &mut WebsocketContext,
         action: Self::Action,
-    ) -> anyhow::Result<crate::actors::websocket::neo::EventLoopInstruction> {
+    ) -> anyhow::Result<crate::actors::websocket::actor_context::EventLoopInstruction> {
         match action {
             Action::NewData(action) => self.handle_new_data(context, action).await,
             Action::Close(action) => self.handle_close(context, action).await,
@@ -49,16 +47,16 @@ impl WebsocketActorContextHandler for DataPusher {
 
     async fn handle_bytes_with_context(
         &mut self,
-        context: &mut crate::actors::websocket::neo::websocket_context::WebsocketContext,
+        context: &mut WebsocketContext,
         bytes: actix_web::web::Bytes,
-    ) -> anyhow::Result<crate::actors::websocket::neo::EventLoopInstruction> {
+    ) -> anyhow::Result<crate::actors::websocket::actor_context::EventLoopInstruction> {
         log::debug!(bytes:?; "Received data from the frontend.");
 
         if bytes.slice(..) == "ping" {
             context
                 .send_to_peer(ws::Message::Text("pong".into()))
                 .await?;
-            Ok(crate::actors::websocket::neo::EventLoopInstruction::Continue)
+            Ok(crate::actors::websocket::actor_context::EventLoopInstruction::Continue)
         } else {
             Err(anyhow::anyhow!(
                 "Unexpected data received from the peer: {:?}",
