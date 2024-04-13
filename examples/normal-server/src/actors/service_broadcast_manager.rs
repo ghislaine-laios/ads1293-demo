@@ -187,6 +187,8 @@ pub(super) mod handlers {
                     .await?;
             }
 
+            log::debug!(current_activated_connections = self.activated_connections; "Unregistered connection.");
+
             Ok(())
         }
     }
@@ -227,5 +229,11 @@ mod tests {
         launched_manager.unregister_connection().await.unwrap();
 
         log_socket_handle.await.unwrap();
+    }
+}
+
+impl Drop for ServiceBroadcastManager {
+    fn drop(&mut self) {
+        log::debug!(current_activated_connections = self.activated_connections; "Dropping the service broadcast manager")
     }
 }

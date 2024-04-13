@@ -3,8 +3,12 @@ use embassy_futures::select::select;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use esp_idf_svc::eventloop::EspSystemEventLoop;
+use esp_idf_svc::hal;
+use esp_idf_svc::hal::delay::FreeRtos;
+use esp_idf_svc::hal::gpio;
 use esp_idf_svc::hal::gpio::OutputPin;
 use esp_idf_svc::hal::gpio::PinDriver;
+use esp_idf_svc::hal::peripheral::Peripheral;
 use esp_idf_svc::hal::prelude::*;
 use esp_idf_svc::hal::spi;
 use esp_idf_svc::hal::spi::SpiDeviceDriver;
@@ -14,6 +18,7 @@ use esp_idf_svc::hal::task;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use esp_idf_svc::timer::EspTaskTimerService;
 use esp_idf_sys::esp;
+use esp_idf_sys::esp_wifi_sta_get_rssi;
 use futures_util::SinkExt;
 use normal::communication::communication;
 use normal::communication::connect_wifi;
@@ -24,7 +29,9 @@ use normal::data;
 use normal::settings::Settings;
 use normal_data::Data;
 use std::net::SocketAddr;
+use std::thread;
 use std::time::Duration;
+use tokio_tungstenite::connect_async;
 
 static DATA_CHANNEL: embassy_sync::channel::Channel<
     CriticalSectionRawMutex,
@@ -56,6 +63,13 @@ fn main() -> anyhow::Result<()> {
     let peripherals = Peripherals::take().expect("error when trying to take peripherals");
 
     let led_pin = peripherals.pins.gpio27;
+    let mut led_pin = PinDriver::output(led_pin).expect("failed to take the led pin");
+    led_pin.set_high().unwrap();
+    FreeRtos::delay_ms(200);
+    led_pin.set_low().unwrap();
+    FreeRtos::delay_ms(200);
+    led_pin.set_high().unwrap();
+
     let spi2 = peripherals.spi2;
     let sclk = peripherals.pins.gpio14;
     let sdo = peripherals.pins.gpio13;
@@ -81,7 +95,7 @@ fn main() -> anyhow::Result<()> {
         connect_wifi_payload.timer_service,
     );
 
-    let _wifi = task::block_on(wifi_fut).unwrap();
+    let wifi = task::block_on(wifi_fut).unwrap();
 
     log::info!("the wifi has been setup");
 
@@ -96,6 +110,8 @@ fn main() -> anyhow::Result<()> {
 
     log::info!("the service is discovered");
 
+    let (tx, rx) = tokio::sync::mpsc::channel(2);
+
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -104,10 +120,22 @@ fn main() -> anyhow::Result<()> {
             // We like blinking!
             tokio::spawn(led(led_pin));
 
-            let mut socket = setup_websocket(addr).await;
-            log::info!("the websocket client has been setup");
+            tokio::spawn(async move {
+                loop {
+                    let mut rssi: i32 = 0;
+                    let r = unsafe { esp!(esp_wifi_sta_get_rssi(&mut rssi as *mut i32)) };
+                    r.unwrap();
+                    log::info!("current rssi: {}", rssi);
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+            });
 
-            let (tx, rx) = tokio::sync::mpsc::channel(2);
+            let mut socket = setup_websocket(addr).await;
+            let communication_handle = tokio::spawn(async move {
+                communication(&mut socket, rx).await;
+                socket.flush().await.unwrap();
+                log::error!("The websocket has closed.")
+            });
 
             let spi = SpiDriver::new(spi2, sclk, sdo, Some(sdi), &SpiDriverConfig::new())
                 .expect("failed when setting up the SPI interface (2)");
@@ -118,21 +146,14 @@ fn main() -> anyhow::Result<()> {
             let device = SpiDeviceDriver::new(spi, Some(ads1293_cs), &config)
                 .expect("failed when setting up the SpiDevice of ads1293");
 
-            let ws = async {
-                communication(&mut socket, rx).await;
-                socket.flush().await.unwrap();
-            };
-
-            select(data::data(device, tx), ws).await;
+            select(data::data(device, tx), communication_handle).await;
             log::error!("some routine exits!");
         });
 
     anyhow::Ok(())
 }
 
-async fn led<L: OutputPin>(led_pin: L) {
-    let mut led_pin = PinDriver::output(led_pin).expect("failed to take the led pin");
-
+async fn led<L: OutputPin>(mut led_pin: PinDriver<'static, L, gpio::Output>) {
     let mut next_low = true;
 
     loop {
@@ -146,6 +167,6 @@ async fn led<L: OutputPin>(led_pin: L) {
 
         next_low = !next_low;
 
-        tokio::time::sleep(Duration::from_secs(1)).await;
+        tokio::time::sleep(Duration::from_secs(2)).await;
     }
 }

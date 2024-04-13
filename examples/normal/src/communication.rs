@@ -9,6 +9,7 @@ use esp_idf_svc::wifi;
 use esp_idf_svc::wifi::AsyncWifi;
 use esp_idf_svc::wifi::ClientConfiguration;
 use esp_idf_svc::wifi::EspWifi;
+use esp_idf_sys::esp;
 use futures_util::SinkExt;
 use normal_data::Data;
 use normal_data::ServiceMessage;
@@ -23,6 +24,8 @@ use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::MaybeTlsStream;
 use tokio_tungstenite::WebSocketStream;
+use esp_idf_sys::esp_wifi_set_ps;
+use esp_idf_sys::wifi_ps_type_t_WIFI_PS_NONE;
 
 pub struct ConnectWifiPayload<M: WifiModemPeripheral, Modem: Peripheral<P = M>> {
     pub modem: Modem,
@@ -44,10 +47,10 @@ pub async fn communication(
         socket.feed(Message::text(str)).await.unwrap();
 
         count += 1;
-        if count == 30 {
-            log::info!("flush! last data id: {}", data.id);
+        if count == 3 {
+            log::debug!("flush! last data id: {}", data.id);
             socket.flush().await.unwrap();
-            log::info!("flushed!");
+            log::debug!("flushed!");
             count = 0;
         }
     }
@@ -69,13 +72,13 @@ pub async fn connect_wifi<'d, M: WifiModemPeripheral>(
         ..Default::default()
     });
 
-    let mut wifi = AsyncWifi::wrap(
-        EspWifi::new(modem, sys_loop.clone(), Some(nvs))
-            .expect("failed to create esp-wifi service"),
-        sys_loop,
-        timer_service,
-    )
-    .expect("failed to create async wifi service");
+    let mut wifi = EspWifi::new(modem, sys_loop.clone(), Some(nvs))
+        .expect("failed to create esp-wifi service");
+
+    wifi.driver_mut().set_rssi_threshold(-40).unwrap();
+
+    let mut wifi = AsyncWifi::wrap(wifi, sys_loop, timer_service)
+        .expect("failed to create async wifi service");
 
     wifi.set_configuration(&wifi_config)
         .expect("failed to set wifi configuration");
@@ -87,6 +90,8 @@ pub async fn connect_wifi<'d, M: WifiModemPeripheral>(
     wifi.wait_netif_up()
         .await
         .expect("failed to call wait_netif_up on wifi service");
+    
+    esp!(unsafe {esp_wifi_set_ps(wifi_ps_type_t_WIFI_PS_NONE)}).unwrap();
 
     Ok(wifi)
 }
