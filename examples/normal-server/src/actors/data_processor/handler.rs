@@ -42,12 +42,12 @@ impl WebsocketActorContextHandler for ReceiveDataFromHardware {
         self.launched_data_hub
             .unregister_data_processor(self.id)
             .await
-            .context("failed to unregister this processor in data hub")?;
+            .expect("failed to unregister this processor in data hub");
 
         self.launched_service_broadcast_manager
             .unregister_connection()
             .await
-            .map_err(|_| StopProcessingError::UnregisterConnectionFailed)?;
+            .expect("failed to unregister the connection to the service broadcast manager due to the closed channel");
 
         Ok(error)
     }

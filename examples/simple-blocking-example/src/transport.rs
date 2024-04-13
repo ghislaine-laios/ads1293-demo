@@ -51,3 +51,5 @@ pub fn discover_service(port: u16) -> Result<SocketAddrV4, ServiceDiscoveryError
 
     Ok(addr)
 }
+
+pub fn transport_thread() {}

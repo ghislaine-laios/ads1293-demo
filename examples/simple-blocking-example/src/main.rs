@@ -130,7 +130,7 @@ fn main() {
         })
     }
     .unwrap();
-    timer.every(Duration::from_millis(20)).unwrap();
+    timer.every(Duration::from_millis(300)).unwrap();
 
     let mut is_pin_high = true;
     loop {
