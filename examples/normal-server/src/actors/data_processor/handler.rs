@@ -39,16 +39,6 @@ impl WebsocketActorContextHandler for ReceiveDataFromHardware {
         _: &mut crate::actors::websocket::WebsocketContext,
         error: Option<crate::actors::websocket::actor_context::TaskExecutionError>,
     ) -> anyhow::Result<Option<crate::actors::websocket::actor_context::TaskExecutionError>> {
-        self.launched_data_hub
-            .unregister_data_processor(self.id)
-            .await
-            .expect("failed to unregister this processor in data hub");
-
-        self.launched_service_broadcast_manager
-            .unregister_connection()
-            .await
-            .expect("failed to unregister the connection to the service broadcast manager due to the closed channel");
-
         Ok(error)
     }
 
@@ -94,5 +84,12 @@ impl WebsocketActorContextHandler for ReceiveDataFromHardware {
 
     fn get_id(&self) -> u64 {
         self.id as u64
+    }
+}
+
+impl Drop for ReceiveDataFromHardware {
+    fn drop(&mut self) {
+        self.launched_data_hub.try_unregister_data_processor(self.id).unwrap();
+        self.launched_service_broadcast_manager.try_unregister_connection().unwrap();
     }
 }

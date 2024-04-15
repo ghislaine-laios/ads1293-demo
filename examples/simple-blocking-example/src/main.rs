@@ -70,11 +70,11 @@ fn main() {
         EspWebSocketClient::new(
             &url,
             &EspWebSocketClientConfig {
-                network_timeout_ms: Duration::from_millis(100),
+                network_timeout_ms: Duration::from_millis(500),
                 reconnect_timeout_ms: Duration::from_millis(10),
                 ..Default::default()
             },
-            Duration::from_millis(500),
+            Duration::from_millis(30),
             |_| {},
         )
         .unwrap()
@@ -124,9 +124,9 @@ fn main() {
             if !ws_client.is_connected() {
                 return;
             }
-            ws_client
+            let _ = ws_client
                 .send(esp_idf_svc::ws::FrameType::Text(false), str)
-                .unwrap();
+                .map_err(|e| log::error!("Failed to send data through ws."));
         })
     }
     .unwrap();

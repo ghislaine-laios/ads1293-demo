@@ -72,6 +72,14 @@ impl LaunchedDataHub {
             .await
     }
 
+    pub fn try_unregister_data_processor(
+        &self,
+        id: DataProcessorId,
+    ) -> Result<(), mpsc::error::TrySendError<Action>> {
+        self.tx
+            .try_send(Action::UnregisterDataProcessor(UnregisterDataProcessor(id)))
+    }
+
     pub async fn register_data_pusher(
         &self,
         id: DataPusherId,

@@ -126,6 +126,13 @@ impl LaunchedServiceBroadcastManager {
             .send(actions::Action::UnregisterConnection(UnregisterConnection))
             .await
     }
+
+    pub fn try_unregister_connection(
+        &self,
+    ) -> Result<(), tokio::sync::mpsc::error::TrySendError<actions::Action>> {
+        self.tx
+            .try_send(actions::Action::UnregisterConnection(UnregisterConnection))
+    }
 }
 
 pub(super) mod actions {

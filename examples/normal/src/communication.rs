@@ -10,6 +10,8 @@ use esp_idf_svc::wifi::AsyncWifi;
 use esp_idf_svc::wifi::ClientConfiguration;
 use esp_idf_svc::wifi::EspWifi;
 use esp_idf_sys::esp;
+use esp_idf_sys::esp_wifi_set_ps;
+use esp_idf_sys::wifi_ps_type_t_WIFI_PS_NONE;
 use futures_util::SinkExt;
 use normal_data::Data;
 use normal_data::ServiceMessage;
@@ -19,13 +21,13 @@ use normal_data::SERVICE_NAME;
 use std::net::SocketAddr;
 use std::net::SocketAddrV4;
 use std::net::UdpSocket;
+use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio_tungstenite::connect_async;
+use tokio_tungstenite::connect_async_with_config;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::MaybeTlsStream;
 use tokio_tungstenite::WebSocketStream;
-use esp_idf_sys::esp_wifi_set_ps;
-use esp_idf_sys::wifi_ps_type_t_WIFI_PS_NONE;
 
 pub struct ConnectWifiPayload<M: WifiModemPeripheral, Modem: Peripheral<P = M>> {
     pub modem: Modem,
@@ -44,15 +46,21 @@ pub async fn communication(
         let str = serde_json::to_string(&data)
             .map_err(|e| format!("cannot serialize the data: {:#?}", e))
             .unwrap();
-        socket.feed(Message::text(str)).await.unwrap();
+        let r = tokio::time::timeout(Duration::from_millis(20), socket.send(Message::text(str)))
+            .await
+            .map_err(|_| log::warn!("Timeout to send data."));
 
-        count += 1;
-        if count == 3 {
-            log::debug!("flush! last data id: {}", data.id);
-            socket.flush().await.unwrap();
-            log::debug!("flushed!");
-            count = 0;
+        if let Ok(r) = r {
+            r.expect("failed to send the data")
         }
+
+        // count += 1;
+        // if count == 3 {
+        //     log::debug!("flush! last data id: {}", data.id);
+        //     socket.flush().await.unwrap();
+        //     log::debug!("flushed!");
+        //     count = 0;
+        // }
     }
 }
 
@@ -90,8 +98,8 @@ pub async fn connect_wifi<'d, M: WifiModemPeripheral>(
     wifi.wait_netif_up()
         .await
         .expect("failed to call wait_netif_up on wifi service");
-    
-    esp!(unsafe {esp_wifi_set_ps(wifi_ps_type_t_WIFI_PS_NONE)}).unwrap();
+
+    esp!(unsafe { esp_wifi_set_ps(wifi_ps_type_t_WIFI_PS_NONE) }).unwrap();
 
     Ok(wifi)
 }
@@ -103,7 +111,7 @@ pub async fn setup_websocket(
 
     log::info!("websocket is connecting to {}", url.as_str());
 
-    let (socket, resp) = connect_async(url).await.unwrap();
+    let (socket, resp) = connect_async_with_config(url, None, false).await.unwrap();
 
     log::info!("websocket resp: {:?}", resp);
 
