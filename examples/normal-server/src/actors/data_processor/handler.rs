@@ -5,10 +5,7 @@ use normal_data::Data;
 use sea_orm::Set;
 
 use crate::{
-    actors::{
-        data_processor::StopProcessingError,
-        websocket::actor_context::{NoAction, WebsocketActorContextHandler},
-    },
+    actors::websocket::actor_context::{NoAction, WebsocketActorContextHandler},
     entities::data,
 };
 
@@ -25,11 +22,6 @@ impl WebsocketActorContextHandler for ReceiveDataFromHardware {
             .register_data_processor(self.id)
             .await
             .map_err(|_| StartProcessingError::RegisterProcessorFailed)?;
-
-        self.launched_service_broadcast_manager
-            .register_connection()
-            .await
-            .map_err(|_| StartProcessingError::RegisterConnectionFailed)?;
 
         Ok(())
     }
@@ -89,7 +81,8 @@ impl WebsocketActorContextHandler for ReceiveDataFromHardware {
 
 impl Drop for ReceiveDataFromHardware {
     fn drop(&mut self) {
-        self.launched_data_hub.try_unregister_data_processor(self.id).unwrap();
-        self.launched_service_broadcast_manager.try_unregister_connection().unwrap();
+        self.launched_data_hub
+            .try_unregister_data_processor(self.id)
+            .unwrap();
     }
 }

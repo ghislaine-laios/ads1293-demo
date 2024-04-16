@@ -27,7 +27,8 @@ impl DataHub {
     }
 
     pub fn launch(self) -> (LaunchedDataHub, tokio::task::JoinHandle<anyhow::Result<()>>) {
-        let (tx, rx) = tokio::sync::mpsc::channel::<actions::Action>(4);
+        let (tx, rx) = mpsc::channel::<actions::Action>(8);
+        // let (control_tx, control_rx) = mpsc::unbounded_channel();
         let join_handle = actix_rt::spawn(async move { self.task(rx).await });
 
         (LaunchedDataHub { tx }, join_handle)
@@ -99,6 +100,14 @@ impl LaunchedDataHub {
             .await
     }
 
+    pub fn try_unregister_data_pusher(
+        &self,
+        id: DataPusherId,
+    ) -> Result<(), mpsc::error::TrySendError<Action>> {
+        self.tx
+            .try_send(Action::UnRegisterDataPusher(UnRegisterDataPusher(id)))
+    }
+
     pub async fn new_data_from_processor(
         &self,
         processor_id: DataProcessorId,
@@ -110,5 +119,16 @@ impl LaunchedDataHub {
                 data,
             )))
             .await
+    }
+}
+
+#[derive(Debug)]
+pub struct DataProcessorRegistration {
+    launched_data_hub: LaunchedDataHub
+}
+
+impl DataProcessorRegistration {
+    pub async fn new() {
+
     }
 }

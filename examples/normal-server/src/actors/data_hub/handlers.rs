@@ -142,7 +142,8 @@ impl Handler<actions::NewDataFromProcessor> for DataHub {
                 .context(format!(
                     "failed to send data to the data pusher (id = {})",
                     id
-                )).map_err(|e| log::warn!(e:?;"failed to send data to the data pusher"));
+                ))
+                .map_err(|e| log::warn!(e:?;"failed to send data to the data pusher"));
         }
 
         Ok(())

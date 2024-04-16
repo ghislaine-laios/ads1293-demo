@@ -3,7 +3,8 @@ use super::FeedRawDataError;
 use crate::actors::{
     interval::watch_dog::WatchDog,
     websocket::{
-        feed_raw_data, fut_into_output_stream, actor_context::process_incoming_raw::process_incoming_raw,
+        actor_context::process_incoming_raw::process_incoming_raw, feed_raw_data,
+        fut_into_output_stream,
     },
 };
 use actix_web::web::{self, Bytes};
@@ -28,11 +29,15 @@ pub trait WebsocketActorContextHandler {
 
     async fn started(&mut self, context: &mut WebsocketContext) -> anyhow::Result<()>;
 
+    // When the handler was dropped this hook would not be called.
+    // Use `Drop` to release resources.
     async fn stopped(
         &mut self,
-        context: &mut WebsocketContext,
+        #[allow(unused_variables)] context: &mut WebsocketContext,
         error: Option<TaskExecutionError>,
-    ) -> anyhow::Result<Option<TaskExecutionError>>;
+    ) -> anyhow::Result<Option<TaskExecutionError>> {
+        Ok(error)
+    }
 
     async fn handle_action_with_context(
         &mut self,
@@ -105,7 +110,9 @@ pub struct DataProcessingHandlerInfo {
 }
 
 impl DataProcessingHandlerInfo {
-    pub(super) fn new<Handler: WebsocketActorContextHandler>(h: &Handler) -> DataProcessingHandlerInfo {
+    pub(super) fn new<Handler: WebsocketActorContextHandler>(
+        h: &Handler,
+    ) -> DataProcessingHandlerInfo {
         Self {
             id: h.get_id(),
             r#type: type_name::<Handler>(),

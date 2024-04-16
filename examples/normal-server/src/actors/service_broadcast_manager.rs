@@ -1,10 +1,9 @@
-use anyhow::Ok;
 use smallvec::SmallVec;
-use tokio::join;
+use tokio::{join, sync::mpsc};
 
 use crate::actors::Handler;
 
-use self::actions::{RegisterConnection, UnregisterConnection};
+use self::actions::{Action, RegisterConnection, UnregisterConnection};
 
 use super::service_broadcaster::{self, LaunchedServiceBroadcaster, ServiceBroadcaster};
 
@@ -78,7 +77,7 @@ impl ServiceBroadcastManager {
         LaunchedServiceBroadcastManager,
         tokio::task::JoinHandle<anyhow::Result<()>>,
     ) {
-        let (tx, rx) = tokio::sync::mpsc::channel::<actions::Action>(4);
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<actions::Action>();
         let join_handle = actix_rt::spawn(async move { self.task(rx).await });
 
         (LaunchedServiceBroadcastManager { tx }, join_handle)
@@ -86,7 +85,7 @@ impl ServiceBroadcastManager {
 
     async fn task(
         mut self,
-        mut rx: tokio::sync::mpsc::Receiver<actions::Action>,
+        mut rx: mpsc::UnboundedReceiver<actions::Action>,
     ) -> anyhow::Result<()> {
         while let Some(action) = rx.recv().await {
             self.process_action(action).await?;
@@ -105,33 +104,46 @@ impl ServiceBroadcastManager {
     }
 }
 
+
+
 #[derive(Debug, Clone)]
 pub struct LaunchedServiceBroadcastManager {
-    tx: tokio::sync::mpsc::Sender<actions::Action>,
+    tx: mpsc::UnboundedSender<actions::Action>,
 }
 
 impl LaunchedServiceBroadcastManager {
-    pub async fn register_connection(
+    pub fn register_connection(
         &self,
     ) -> Result<(), tokio::sync::mpsc::error::SendError<actions::Action>> {
         self.tx
             .send(actions::Action::RegisterConnection(RegisterConnection))
-            .await
     }
 
-    pub async fn unregister_connection(
+    pub fn unregister_connection(
         &self,
     ) -> Result<(), tokio::sync::mpsc::error::SendError<actions::Action>> {
         self.tx
             .send(actions::Action::UnregisterConnection(UnregisterConnection))
-            .await
     }
+}
 
-    pub fn try_unregister_connection(
-        &self,
-    ) -> Result<(), tokio::sync::mpsc::error::TrySendError<actions::Action>> {
-        self.tx
-            .try_send(actions::Action::UnregisterConnection(UnregisterConnection))
+#[derive(Debug, Clone)]
+pub struct ConnectionKeeper {
+    manager: LaunchedServiceBroadcastManager,
+}
+
+impl ConnectionKeeper {
+    pub async fn new(
+        manager: LaunchedServiceBroadcastManager,
+    ) -> Result<ConnectionKeeper, mpsc::error::SendError<Action>> {
+        manager.register_connection()?;
+        Ok(Self { manager })
+    }
+}
+
+impl Drop for ConnectionKeeper {
+    fn drop(&mut self) {
+        let _ = self.manager.unregister_connection();
     }
 }
 
@@ -229,18 +241,12 @@ mod tests {
             );
 
         tokio::time::sleep(Duration::from_millis(3000)).await;
-        launched_manager.register_connection().await.unwrap();
-        launched_manager.register_connection().await.unwrap();
+        launched_manager.register_connection().unwrap();
+        launched_manager.register_connection().unwrap();
         tokio::time::sleep(Duration::from_millis(3000)).await;
-        launched_manager.unregister_connection().await.unwrap();
-        launched_manager.unregister_connection().await.unwrap();
+        launched_manager.unregister_connection().unwrap();
+        launched_manager.unregister_connection().unwrap();
 
         log_socket_handle.await.unwrap();
-    }
-}
-
-impl Drop for ServiceBroadcastManager {
-    fn drop(&mut self) {
-        log::debug!(current_activated_connections = self.activated_connections; "Dropping the service broadcast manager")
     }
 }

@@ -21,19 +21,6 @@ impl WebsocketActorContextHandler for DataPusher {
             .context("the mailbox of provided data hub has closed. can't register data pusher")
     }
 
-    async fn stopped(
-        &mut self,
-        _: &mut WebsocketContext,
-        error: Option<crate::actors::websocket::actor_context::TaskExecutionError>,
-    ) -> anyhow::Result<Option<crate::actors::websocket::actor_context::TaskExecutionError>> {
-        self.data_hub
-            .unregister_data_pusher(self.id)
-            .await
-            .context("the mailbox of provided data hub has closed. can't unregister data pusher")?;
-
-        Ok(error)
-    }
-
     async fn handle_action_with_context(
         &mut self,
         context: &mut WebsocketContext,
@@ -137,5 +124,11 @@ impl DataPusher {
         }
 
         Ok(EventLoopInstruction::Break)
+    }
+}
+
+impl Drop for DataPusher {
+    fn drop(&mut self) {
+        self.data_hub.try_unregister_data_pusher(self.id).unwrap()
     }
 }

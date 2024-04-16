@@ -1,9 +1,14 @@
-use super::{data_hub::LaunchedDataHub, websocket::actor_context::WebsocketActorContext};
+use super::{
+    data_hub::LaunchedDataHub,
+    service_broadcast_manager::{self, ConnectionKeeper},
+    websocket::actor_context::WebsocketActorContext,
+};
 use crate::{
     actors::service_broadcast_manager::LaunchedServiceBroadcastManager,
     entities::data_transaction::{self, ActiveModel},
 };
 use actix_web::web::{Bytes, Payload};
+use anyhow::Context;
 use futures::{Stream, TryFutureExt};
 use sea_orm::{DatabaseConnection, Set};
 use std::time::Duration;
@@ -49,10 +54,11 @@ pub enum StopProcessingError {
 #[derive(Debug)]
 pub struct ReceiveDataFromHardware {
     id: DataProcessorId,
-    launched_service_broadcast_manager: LaunchedServiceBroadcastManager,
     data_transaction: data_transaction::Model,
     launched_data_saver: LaunchedDataSaver,
     launched_data_hub: LaunchedDataHub,
+    #[allow(unused)]
+    connection_keeper: service_broadcast_manager::ConnectionKeeper,
 }
 
 impl ReceiveDataFromHardware {
@@ -65,12 +71,17 @@ impl ReceiveDataFromHardware {
         impl Stream<Item = Result<Bytes, super::websocket::actor_context::TaskExecutionError>>,
         anyhow::Error,
     > {
+        const FAILED_TO_INSERT_DATA_TRANSACTION_STR: &'static str =
+            "failed to insert the data transaction into the database";
+        const FAILED_TO_CREATE_CONNECTION_KEEPER_STR: &'static str = "failed to register the connection to the service broadcast manager due to the closed channel";
+
         let data_transaction = Mutation(db_coon.clone())
             .insert_data_transaction(ActiveModel {
                 start_time: Set(chrono::Local::now().naive_local()),
                 ..Default::default()
             })
-            .await?;
+            .await
+            .context(FAILED_TO_INSERT_DATA_TRANSACTION_STR)?;
 
         let (launched_data_saver, data_saver_fut) = DataSaver::new(db_coon).launch_inline(Some(60));
 
@@ -81,10 +92,12 @@ impl ReceiveDataFromHardware {
             action_rx,
             Self {
                 id: data_transaction.id as u32,
-                launched_service_broadcast_manager,
                 data_transaction,
                 launched_data_saver,
                 launched_data_hub,
+                connection_keeper: ConnectionKeeper::new(launched_service_broadcast_manager)
+                    .await
+                    .context(FAILED_TO_CREATE_CONNECTION_KEEPER_STR)?,
             },
             Duration::from_secs(15),
             Duration::from_secs(1),
