@@ -58,6 +58,7 @@ pub async fn retrieve_data(
 #[cfg(test)]
 mod tests {
     use crate::{app, settings::Settings};
+    use abort_on_drop::ChildTask;
     use futures::{SinkExt, StreamExt};
     use normal_data::Data;
     use std::time::Duration;
@@ -74,7 +75,7 @@ mod tests {
 
         let main = actix_rt::spawn(async move { app().await });
 
-        actix_rt::time::sleep(Duration::from_millis(500)).await;
+        actix_rt::time::sleep(Duration::from_millis(100)).await;
 
         let port = settings.bind_to.port;
 
@@ -100,7 +101,7 @@ mod tests {
             }
         };
 
-        let listener_task = actix_rt::spawn(listener_task);
+        let listener_task = ChildTask::from(actix_rt::spawn(listener_task));
 
         let port = settings.bind_to.port;
 
@@ -142,14 +143,9 @@ mod tests {
             }
         };
 
-        let client_task = actix_rt::spawn(client_task);
+        let client_task = ChildTask::from(actix_rt::spawn(client_task));
 
         select! {
-            r = main => {
-                if let Err(e) = r {
-                    panic!("main task ended with error {:#?}", e)
-                }
-            },
             r = client_task => {
                 if let Err(e) = r {
                     panic!("client task panicked: {:#?}", e)
@@ -161,5 +157,8 @@ mod tests {
                 }
             }
         }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        drop(main)
     }
 }

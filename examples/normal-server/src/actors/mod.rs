@@ -6,6 +6,8 @@ pub mod interval;
 pub mod recipient;
 pub mod service_broadcast_manager;
 pub mod service_broadcaster;
+pub mod udp_data_processor;
 pub mod websocket;
+pub mod udp;
 
 pub use handler::Handler;
