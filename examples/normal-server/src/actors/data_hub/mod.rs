@@ -1,6 +1,6 @@
 use self::actions::{
-    Action, NewDataFromProcessor, RegisterDataProcessor, RegisterDataPusher, UnRegisterDataPusher,
-    UnregisterDataProcessor,
+    Action, ControlAction, NewDataFromProcessor, RegisterDataProcessor, RegisterDataPusher,
+    UnRegisterDataPusher, UnregisterDataProcessor,
 };
 use super::{
     data_processor::DataProcessorId,
@@ -13,6 +13,7 @@ use tokio::sync::mpsc;
 
 pub mod actions;
 pub mod handlers;
+pub mod registration_keepers;
 
 #[derive(Default)]
 pub struct DataHub {
@@ -26,17 +27,48 @@ impl DataHub {
         Self::default()
     }
 
-    pub fn launch(self) -> (LaunchedDataHub, tokio::task::JoinHandle<anyhow::Result<()>>) {
+    pub fn launch(
+        self,
+    ) -> (
+        LaunchedDataHub,
+        LaunchedDataHubController,
+        tokio::task::JoinHandle<Result<(), anyhow::Error>>,
+    ) {
         let (tx, rx) = mpsc::channel::<actions::Action>(8);
-        // let (control_tx, control_rx) = mpsc::unbounded_channel();
-        let join_handle = actix_rt::spawn(async move { self.task(rx).await });
+        let (control_tx, control_rx) = mpsc::unbounded_channel();
+        let join_handle = actix_rt::spawn(async move { self.task(rx, control_rx).await });
 
-        (LaunchedDataHub { tx }, join_handle)
+        (
+            LaunchedDataHub { tx },
+            LaunchedDataHubController { control_tx },
+            join_handle,
+        )
     }
 
-    async fn task(mut self, mut rx: mpsc::Receiver<actions::Action>) -> anyhow::Result<()> {
-        while let Some(action) = rx.recv().await {
-            self.handle(action).await?;
+    async fn task(
+        mut self,
+        mut rx: mpsc::Receiver<actions::Action>,
+        mut control_action_rx: mpsc::UnboundedReceiver<actions::ControlAction>,
+    ) -> anyhow::Result<()> {
+        macro_rules! process_action {
+            ($action:ident) => {{
+                let Some(action) = $action else { break };
+                self.handle(action).await?;
+            }};
+        }
+
+        loop {
+            tokio::select! {
+                biased;
+
+                action = control_action_rx.recv() => {
+                    process_action!(action)
+                }
+                action = rx.recv() => {
+                    process_action!(action)
+                }
+
+            }
         }
 
         Ok(())
@@ -54,60 +86,12 @@ pub struct LaunchedDataHub {
     tx: mpsc::Sender<actions::Action>,
 }
 
+#[derive(Clone, Debug)]
+pub struct LaunchedDataHubController {
+    control_tx: mpsc::UnboundedSender<actions::ControlAction>,
+}
+
 impl LaunchedDataHub {
-    pub async fn register_data_processor(
-        &self,
-        id: DataProcessorId,
-    ) -> Result<(), mpsc::error::SendError<Action>> {
-        self.tx
-            .send(Action::RegisterDataProcessor(RegisterDataProcessor(id)))
-            .await
-    }
-
-    pub async fn unregister_data_processor(
-        &self,
-        id: DataProcessorId,
-    ) -> Result<(), mpsc::error::SendError<Action>> {
-        self.tx
-            .send(Action::UnregisterDataProcessor(UnregisterDataProcessor(id)))
-            .await
-    }
-
-    pub fn try_unregister_data_processor(
-        &self,
-        id: DataProcessorId,
-    ) -> Result<(), mpsc::error::TrySendError<Action>> {
-        self.tx
-            .try_send(Action::UnregisterDataProcessor(UnregisterDataProcessor(id)))
-    }
-
-    pub async fn register_data_pusher(
-        &self,
-        id: DataPusherId,
-        launched: LaunchedDataPusher,
-    ) -> Result<(), mpsc::error::SendError<Action>> {
-        self.tx
-            .send(Action::RegisterDataPusher(RegisterDataPusher(id, launched)))
-            .await
-    }
-
-    pub async fn unregister_data_pusher(
-        &self,
-        id: DataPusherId,
-    ) -> Result<(), mpsc::error::SendError<Action>> {
-        self.tx
-            .send(Action::UnRegisterDataPusher(UnRegisterDataPusher(id)))
-            .await
-    }
-
-    pub fn try_unregister_data_pusher(
-        &self,
-        id: DataPusherId,
-    ) -> Result<(), mpsc::error::TrySendError<Action>> {
-        self.tx
-            .try_send(Action::UnRegisterDataPusher(UnRegisterDataPusher(id)))
-    }
-
     pub async fn new_data_from_processor(
         &self,
         processor_id: DataProcessorId,
@@ -122,13 +106,44 @@ impl LaunchedDataHub {
     }
 }
 
-#[derive(Debug)]
-pub struct DataProcessorRegistration {
-    launched_data_hub: LaunchedDataHub
-}
+impl LaunchedDataHubController {
+    pub fn register_data_processor(
+        &self,
+        id: DataProcessorId,
+    ) -> Result<(), mpsc::error::SendError<ControlAction>> {
+        self.control_tx
+            .send(ControlAction::RegisterDataProcessor(RegisterDataProcessor(
+                id,
+            )))
+    }
 
-impl DataProcessorRegistration {
-    pub async fn new() {
+    pub fn unregister_data_processor(
+        &self,
+        id: DataProcessorId,
+    ) -> Result<(), mpsc::error::SendError<ControlAction>> {
+        self.control_tx.send(ControlAction::UnregisterDataProcessor(
+            UnregisterDataProcessor(id),
+        ))
+    }
 
+    pub fn register_data_pusher(
+        &self,
+        id: DataPusherId,
+        launched: LaunchedDataPusher,
+    ) -> Result<(), mpsc::error::SendError<ControlAction>> {
+        self.control_tx
+            .send(ControlAction::RegisterDataPusher(RegisterDataPusher(
+                id, launched,
+            )))
+    }
+
+    pub fn unregister_data_pusher(
+        &self,
+        id: DataPusherId,
+    ) -> Result<(), mpsc::error::SendError<ControlAction>> {
+        self.control_tx
+            .send(ControlAction::UnRegisterDataPusher(UnRegisterDataPusher(
+                id,
+            )))
     }
 }

@@ -15,10 +15,7 @@ impl WebsocketActorContextHandler for DataPusher {
     type Action = Action;
 
     async fn started(&mut self, _: &mut WebsocketContext) -> anyhow::Result<()> {
-        self.data_hub
-            .register_data_pusher(self.id, self.launched_self.clone())
-            .await
-            .context("the mailbox of provided data hub has closed. can't register data pusher")
+        Ok(())
     }
 
     async fn handle_action_with_context(
@@ -124,11 +121,5 @@ impl DataPusher {
         }
 
         Ok(EventLoopInstruction::Break)
-    }
-}
-
-impl Drop for DataPusher {
-    fn drop(&mut self) {
-        self.data_hub.try_unregister_data_pusher(self.id).unwrap()
     }
 }

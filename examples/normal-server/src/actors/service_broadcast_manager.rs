@@ -104,8 +104,6 @@ impl ServiceBroadcastManager {
     }
 }
 
-
-
 #[derive(Debug, Clone)]
 pub struct LaunchedServiceBroadcastManager {
     tx: mpsc::UnboundedSender<actions::Action>,
@@ -133,7 +131,7 @@ pub struct ConnectionKeeper {
 }
 
 impl ConnectionKeeper {
-    pub async fn new(
+    pub fn new(
         manager: LaunchedServiceBroadcastManager,
     ) -> Result<ConnectionKeeper, mpsc::error::SendError<Action>> {
         manager.register_connection()?;

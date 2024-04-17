@@ -1,7 +1,9 @@
 use crate::{
     actors::{
-        data_hub::LaunchedDataHub, data_processor::ReceiveDataFromHardware,
-        data_pusher::DataPusher, service_broadcast_manager::LaunchedServiceBroadcastManager,
+        data_hub::{LaunchedDataHub, LaunchedDataHubController},
+        data_processor::ReceiveDataFromHardware,
+        data_pusher::DataPusher,
+        service_broadcast_manager::LaunchedServiceBroadcastManager,
     },
     errors,
 };
@@ -15,15 +17,19 @@ pub async fn push_data(
     req: HttpRequest,
     stream: web::Payload,
     launched_service_broadcast_manager: web::Data<LaunchedServiceBroadcastManager>,
-    launched_data_hub: web::Data<LaunchedDataHub>,
+    launched_data_hub_and_controller: web::Data<(LaunchedDataHub, LaunchedDataHubController)>,
     db_coon: web::Data<DatabaseConnection>,
 ) -> Result<HttpResponse, Error> {
+    let (launched_data_hub, data_hub_controller) =
+        Arc::unwrap_or_clone(launched_data_hub_and_controller.into_inner());
+
     Ok(actix_web_actors::ws::handshake(&req)?.streaming(
         ReceiveDataFromHardware::launch_inline(
             stream,
             Arc::unwrap_or_clone(db_coon.into_inner()),
             Arc::unwrap_or_clone(launched_service_broadcast_manager.into_inner()),
-            Arc::unwrap_or_clone(launched_data_hub.into_inner()),
+            launched_data_hub,
+            data_hub_controller,
         )
         .await
         .map_err(|e| e.into())
@@ -35,13 +41,17 @@ pub async fn push_data(
 pub async fn retrieve_data(
     req: HttpRequest,
     stream: web::Payload,
-    launched_data_hub: web::Data<LaunchedDataHub>,
+    launched_data_hub_and_controller: web::Data<(LaunchedDataHub, LaunchedDataHubController)>,
 ) -> Result<HttpResponse, Error> {
     let mut resp = actix_web_actors::ws::handshake(&req)?;
 
+    let (_, data_hub_controller) =
+        Arc::unwrap_or_clone(launched_data_hub_and_controller.into_inner());
+
     Ok(resp.streaming(
-        DataPusher::launch_inline(stream, Arc::unwrap_or_clone(launched_data_hub.into_inner()))
-            .await,
+        DataPusher::launch_inline(stream, data_hub_controller)
+            .await
+            .unwrap(),
     ))
 }
 

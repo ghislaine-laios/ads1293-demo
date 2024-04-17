@@ -9,7 +9,7 @@ use crate::{
     entities::data,
 };
 
-use super::{DataProcessingError, ReceiveDataFromHardware, StartProcessingError};
+use super::{DataProcessingError, ReceiveDataFromHardware};
 
 impl WebsocketActorContextHandler for ReceiveDataFromHardware {
     type Action = NoAction;
@@ -18,11 +18,6 @@ impl WebsocketActorContextHandler for ReceiveDataFromHardware {
         &mut self,
         _: &mut crate::actors::websocket::WebsocketContext,
     ) -> anyhow::Result<()> {
-        self.launched_data_hub
-            .register_data_processor(self.id)
-            .await
-            .map_err(|_| StartProcessingError::RegisterProcessorFailed)?;
-
         Ok(())
     }
 
@@ -76,13 +71,5 @@ impl WebsocketActorContextHandler for ReceiveDataFromHardware {
 
     fn get_id(&self) -> u64 {
         self.id as u64
-    }
-}
-
-impl Drop for ReceiveDataFromHardware {
-    fn drop(&mut self) {
-        self.launched_data_hub
-            .try_unregister_data_processor(self.id)
-            .unwrap();
     }
 }

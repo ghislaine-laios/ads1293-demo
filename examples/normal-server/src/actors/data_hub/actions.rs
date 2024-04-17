@@ -7,11 +7,15 @@ use crate::actors::{
 
 #[derive(Debug)]
 pub enum Action {
+    NewDataFromProcessor(NewDataFromProcessor),
+}
+
+#[derive(Debug)]
+pub enum ControlAction {
     RegisterDataProcessor(RegisterDataProcessor),
     UnregisterDataProcessor(UnregisterDataProcessor),
     RegisterDataPusher(RegisterDataPusher),
     UnRegisterDataPusher(UnRegisterDataPusher),
-    NewDataFromProcessor(NewDataFromProcessor),
 }
 
 #[derive(Debug)]

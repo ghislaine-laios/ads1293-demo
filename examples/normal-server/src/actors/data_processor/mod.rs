@@ -1,5 +1,8 @@
 use super::{
-    data_hub::LaunchedDataHub,
+    data_hub::{
+        registration_keepers::DataProcessorRegistrationKeeper, LaunchedDataHub,
+        LaunchedDataHubController,
+    },
     service_broadcast_manager::{self, ConnectionKeeper},
     websocket::actor_context::WebsocketActorContext,
 };
@@ -59,6 +62,8 @@ pub struct ReceiveDataFromHardware {
     launched_data_hub: LaunchedDataHub,
     #[allow(unused)]
     connection_keeper: service_broadcast_manager::ConnectionKeeper,
+    #[allow(unused)]
+    registration_keeper: DataProcessorRegistrationKeeper,
 }
 
 impl ReceiveDataFromHardware {
@@ -67,6 +72,7 @@ impl ReceiveDataFromHardware {
         db_coon: DatabaseConnection,
         launched_service_broadcast_manager: LaunchedServiceBroadcastManager,
         launched_data_hub: LaunchedDataHub,
+        data_hub_controller: LaunchedDataHubController,
     ) -> Result<
         impl Stream<Item = Result<Bytes, super::websocket::actor_context::TaskExecutionError>>,
         anyhow::Error,
@@ -74,6 +80,8 @@ impl ReceiveDataFromHardware {
         const FAILED_TO_INSERT_DATA_TRANSACTION_STR: &'static str =
             "failed to insert the data transaction into the database";
         const FAILED_TO_CREATE_CONNECTION_KEEPER_STR: &'static str = "failed to register the connection to the service broadcast manager due to the closed channel";
+        const FAILED_TO_CREATE_REGISTRATION_KEEPER_STR: &'static str =
+            "failed to register the data processor to the data hub due to the closed channel";
 
         let data_transaction = Mutation(db_coon.clone())
             .insert_data_transaction(ActiveModel {
@@ -87,17 +95,20 @@ impl ReceiveDataFromHardware {
 
         let (_, action_rx) = mpsc::channel(1);
 
+        let id = data_transaction.id as u32;
+
         Ok(WebsocketActorContext::launch_inline(
             payload,
             action_rx,
             Self {
-                id: data_transaction.id as u32,
+                id,
                 data_transaction,
                 launched_data_saver,
                 launched_data_hub,
                 connection_keeper: ConnectionKeeper::new(launched_service_broadcast_manager)
-                    .await
                     .context(FAILED_TO_CREATE_CONNECTION_KEEPER_STR)?,
+                registration_keeper: DataProcessorRegistrationKeeper::new(id, data_hub_controller)
+                    .context(FAILED_TO_CREATE_REGISTRATION_KEEPER_STR)?,
             },
             Duration::from_secs(15),
             Duration::from_secs(1),

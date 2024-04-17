@@ -3,9 +3,15 @@ use anyhow::{anyhow, Context};
 use crate::actors::Handler;
 
 use super::{
-    actions::{self, Action, NewDataFromProcessor},
+    actions::{self, Action, ControlAction, NewDataFromProcessor},
     DataHub,
 };
+
+macro_rules! dispatch {
+    ($self:ident, $action:ident) => {
+        $self.handle($action).await?
+    };
+}
 
 impl Handler<Action> for DataHub {
     type Output = anyhow::Result<()>;
@@ -14,11 +20,28 @@ impl Handler<Action> for DataHub {
         log::trace!("action: {:?}", action);
 
         match action {
-            Action::RegisterDataProcessor(action) => self.handle(action).await?,
-            Action::UnregisterDataProcessor(action) => self.handle(action).await?,
-            Action::RegisterDataPusher(action) => self.handle(action).await?,
-            Action::UnRegisterDataPusher(action) => self.handle(action).await?,
-            Action::NewDataFromProcessor(action) => self.handle(action).await?,
+            Action::NewDataFromProcessor(action) => dispatch!(self, action),
+        }
+
+        Ok(())
+    }
+}
+
+impl Handler<ControlAction> for DataHub {
+    type Output = anyhow::Result<()>;
+
+    async fn handle(&mut self, action: ControlAction) -> Self::Output {
+        macro_rules! self_dispatch {
+            ($action:ident) => {
+                dispatch!(self, $action)
+            };
+        }
+
+        match action {
+            ControlAction::RegisterDataProcessor(action) => self_dispatch!(action),
+            ControlAction::UnregisterDataProcessor(action) => self_dispatch!(action),
+            ControlAction::RegisterDataPusher(action) => self_dispatch!(action),
+            ControlAction::UnRegisterDataPusher(action) => self_dispatch!(action),
         }
 
         Ok(())
