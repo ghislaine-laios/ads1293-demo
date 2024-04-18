@@ -38,7 +38,8 @@ export function Demo() {
             {
               type: "line",
               smooth: true,
-              data: data,
+              data: data as number[],
+              showSymbol: false,
             },
           ]}
         />
