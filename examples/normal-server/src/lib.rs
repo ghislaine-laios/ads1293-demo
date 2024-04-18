@@ -1,6 +1,6 @@
 #![feature(map_try_insert)]
 
-use crate::actors::{data_hub::DataHub, service_broadcast_manager};
+use crate::actors::{data_hub::DataHub, service_broadcast_manager, udp::UdpDataProcessor};
 use actix_web::{middleware::Logger, web, App, HttpServer};
 use actors::{
     service_broadcast_manager::ServiceBroadcastManager, service_broadcaster::ServiceBroadcaster,
@@ -60,6 +60,13 @@ pub async fn app() -> anyhow::Result<()> {
         return Err(anyhow::anyhow!("Pending migrations await application."));
     }
 
+    let udp_data_processor_join_handle = UdpDataProcessor::launch_inline(
+        db_coon.clone(),
+        launched_data_hub.clone(),
+        data_hub_controller.clone(),
+        format!("{}:{}", settings.bind_to.ip, settings.bind_to.udp_port),
+    )
+    .await;
     let server_fut = HttpServer::new(move || {
         App::new()
             .wrap(Logger::default())
@@ -96,8 +103,57 @@ pub async fn app() -> anyhow::Result<()> {
         result = data_hub_fut => {
             result.context("the data hub panicked")?
             .context("the data hub ended with error")?
+        },
+        result = udp_data_processor_join_handle => {
+            result.context("the udp data processor ended with error")?
         }
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod debug {
+    use std::time::Duration;
+
+    use normal_data::Data;
+    use tokio::net::UdpSocket;
+
+    use crate::{actors::data_hub, app, settings::Settings, tests_utils::create_logger_builder};
+
+    #[ignore]
+    #[actix_rt::test]
+    async fn debug_udp_data_processor() {
+        create_logger_builder()
+            .filter_module(data_hub::MODULE_PATH, log::LevelFilter::Trace)
+            .init();
+
+        let _main = actix_rt::spawn(async move { app().await });
+
+        tokio::time::sleep(Duration::from_millis(1000)).await;
+
+        let settings = Settings::new().unwrap();
+
+        let udp_data_pusher_fut = async move {
+            let socket = UdpSocket::bind(("0.0.0.0", 0)).await.unwrap();
+
+            socket
+                .connect(("127.0.0.1", settings.bind_to.udp_port))
+                .await
+                .unwrap();
+
+            for i in 1..1000 {
+                let buf = serde_json::to_vec(&Data {
+                    id: i,
+                    value: i * 2,
+                })
+                .unwrap();
+                socket.send(&buf[..]).await.unwrap();
+            }
+        };
+
+        udp_data_pusher_fut.await;
+
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
 }

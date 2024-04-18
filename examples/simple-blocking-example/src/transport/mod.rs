@@ -1,16 +1,23 @@
-use std::net::{SocketAddr, SocketAddrV4, UdpSocket};
+use esp_idf_svc::ws::client::{EspWebSocketClient, EspWebSocketClientConfig};
+use normal_data::{
+    ServiceMessage, PUSH_DATA_ENDPOINT_WS, SERVICE_MESSAGE_SERIALIZE_MAX_LEN, SERVICE_NAME,
+};
+use std::{
+    net::{SocketAddr, SocketAddrV4, UdpSocket},
+    time::Duration,
+};
 
-use normal_data::{ServiceMessage, SERVICE_MESSAGE_SERIALIZE_MAX_LEN, SERVICE_NAME};
+pub mod udp;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ServiceDiscoveryError {
     #[error("the attempt to deserialize the data received from the service discovery port ({}) has reached its maximum limit.", .0)]
     DeserializationFailed(u16),
     #[error("the ipv6 address is not supported. the address is {}", .0)]
-    Ipv6NotSupported(SocketAddr)
+    Ipv6NotSupported(SocketAddr),
 }
 
-pub fn discover_service(port: u16) -> Result<SocketAddrV4, ServiceDiscoveryError> {
+pub fn discover_service(port: u16) -> Result<(SocketAddrV4, SocketAddrV4), ServiceDiscoveryError> {
     log::info!("Starting to discover the service on port {}", port);
     let socket = UdpSocket::bind(("0.0.0.0", port)).expect("failed to bind the udp socket");
     let mut buf = [0; SERVICE_MESSAGE_SERIALIZE_MAX_LEN];
@@ -46,10 +53,29 @@ pub fn discover_service(port: u16) -> Result<SocketAddrV4, ServiceDiscoveryError
     addr.set_port(service_info.bind_to.port);
 
     let SocketAddr::V4(addr) = addr else {
-        return Err(ServiceDiscoveryError::Ipv6NotSupported(addr))
+        return Err(ServiceDiscoveryError::Ipv6NotSupported(addr));
     };
 
-    Ok(addr)
+    let mut udp_addr = addr.clone();
+    udp_addr.set_port(service_info.bind_to.udp_port);
+
+    Ok((addr, udp_addr))
 }
 
-pub fn transport_thread() {}
+pub fn create_ws_client(server_socket_addr: SocketAddrV4) -> EspWebSocketClient<'static> {
+    let url = format!("ws://{}{}", server_socket_addr, PUSH_DATA_ENDPOINT_WS);
+
+    log::info!("Setting up the websocket client to connect to {}", url);
+
+    EspWebSocketClient::new(
+        &url,
+        &EspWebSocketClientConfig {
+            network_timeout_ms: Duration::from_millis(500),
+            reconnect_timeout_ms: Duration::from_millis(10),
+            ..Default::default()
+        },
+        Duration::from_millis(30),
+        |_| {},
+    )
+    .unwrap()
+}

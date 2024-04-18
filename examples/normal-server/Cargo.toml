@@ -28,7 +28,7 @@ thiserror = "1.0.58"
 tokio = { version = "1.37.0", features = ["sync", "macros"] }
 tokio-stream = "0.1.15"
 tokio-tungstenite = "0.21.0"
-tokio-util = { version = "0.7.10", features = ["codec"] }
+tokio-util = { version = "0.7.10", features = ["codec", "net"] }
 url = "2.5.0"
 normal-data = { path = "../normal-data" }
 sea-orm = { version = "0.12.14", features = [

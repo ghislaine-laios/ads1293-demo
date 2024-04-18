@@ -15,6 +15,8 @@ pub mod actions;
 pub mod handlers;
 pub mod registration_keepers;
 
+pub const MODULE_PATH: &'static str = module_path!();
+
 #[derive(Default)]
 pub struct DataHub {
     data_processors: HashSet<DataProcessorId>,

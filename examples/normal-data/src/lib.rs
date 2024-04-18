@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 pub const DATA_SERIALIZE_MAX_LEN: usize = 32;
-pub const PUSH_DATA_ENDPOINT: &'static str = "/push-data";
+pub const PUSH_DATA_ENDPOINT_WS: &'static str = "/push-data";
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Data {
@@ -17,7 +17,7 @@ impl Data {
 
 pub const SERVICE_NAME: &'static str = "ADS1293-DEMO-NORMAL-SERVICE";
 
-pub const SERVICE_MESSAGE_SERIALIZE_MAX_LEN: usize = 96;
+pub const SERVICE_MESSAGE_SERIALIZE_MAX_LEN: usize = 128;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ServiceMessage {
@@ -29,6 +29,7 @@ pub struct ServiceMessage {
 pub struct BindTo {
     pub ip: String,
     pub port: u16,
+    pub udp_port: u16,
 }
 
 impl ServiceMessage {
@@ -55,6 +56,7 @@ mod tests {
             bind_to: crate::BindTo {
                 ip: "192.168.100.100".to_owned(),
                 port: 15303,
+                udp_port: 15304
             },
         };
         let json = serde_json::to_vec(&service_info).unwrap();

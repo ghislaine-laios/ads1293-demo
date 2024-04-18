@@ -25,7 +25,7 @@ use {
 mod actions;
 mod handler;
 mod id;
-mod mutation;
+pub mod mutation;
 mod saver;
 
 pub use id::*;

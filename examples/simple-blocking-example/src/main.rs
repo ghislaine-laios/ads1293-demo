@@ -1,6 +1,5 @@
 use std::{
-    sync::{Arc, Mutex},
-    time::Duration,
+    sync::{mpsc, Arc, Mutex}, thread, time::Duration
 };
 
 use esp_idf_svc::{
@@ -17,12 +16,12 @@ use esp_idf_svc::{
     wifi::{BlockingWifi, EspWifi},
     ws::client::{EspWebSocketClient, EspWebSocketClientConfig},
 };
-use normal_data::{Data, PUSH_DATA_ENDPOINT};
+use normal_data::{Data, PUSH_DATA_ENDPOINT_WS};
 use simple_blocking_example::{
     data::{init_ads1293, retrieve_data_once},
     led::{in_program_blink, start_program_blink},
     settings::Settings,
-    transport::discover_service,
+    transport::{create_ws_client, discover_service, udp::udp_transport_thread},
     wifi::connect_wifi,
 };
 
@@ -61,24 +60,9 @@ fn main() {
         wifi
     };
 
-    let mut ws_client = {
-        let socket_addr = discover_service(settings.service.broadcast_port).unwrap();
-        let url = format!("ws://{}{}", socket_addr, PUSH_DATA_ENDPOINT);
+    let (ws_socket_addr, udp_socket_addr) = discover_service(settings.service.broadcast_port).unwrap();
 
-        log::info!("Setting up the websocket client to connect to {}", url);
-
-        EspWebSocketClient::new(
-            &url,
-            &EspWebSocketClientConfig {
-                network_timeout_ms: Duration::from_millis(500),
-                reconnect_timeout_ms: Duration::from_millis(10),
-                ..Default::default()
-            },
-            Duration::from_millis(30),
-            |_| {},
-        )
-        .unwrap()
-    };
+    // let mut ws_client = create_ws_client(ws_socket_addr);
 
     let mut ads1293 = {
         let spi2 = peripherals.spi2;
@@ -108,6 +92,12 @@ fn main() {
         // Arc::new(Mutex::new(ads1293))
     };
 
+    let (data_tx, data_rx) = mpsc::sync_channel(1);
+
+    let _transport_thread = thread::Builder::new().stack_size(8192).spawn(move || {
+        udp_transport_thread(udp_socket_addr, data_rx)
+    }).unwrap();
+
     let timer_service = EspTaskTimerService::new().unwrap();
 
     let timer = {
@@ -119,18 +109,20 @@ fn main() {
             let data = Data { id, value: data };
             log::debug!("{:?}", data);
 
-            let str = serde_json::to_string(&data).unwrap();
-            let str = str.as_bytes();
-            if !ws_client.is_connected() {
-                return;
-            }
-            let _ = ws_client
-                .send(esp_idf_svc::ws::FrameType::Text(false), str)
-                .map_err(|e| log::error!("Failed to send data through ws."));
+            data_tx.send(data).unwrap();
+
+            // let str = serde_json::to_string(&data).unwrap();
+            // let str = str.as_bytes();
+            // if !ws_client.is_connected() {
+            //     return;
+            // }
+            // let _ = ws_client
+            //     .send(esp_idf_svc::ws::FrameType::Text(false), str)
+            //     .map_err(|_| log::error!("Failed to send data through ws."));
         })
     }
     .unwrap();
-    timer.every(Duration::from_millis(300)).unwrap();
+    timer.every(Duration::from_millis(20)).unwrap();
 
     let mut is_pin_high = true;
     loop {
