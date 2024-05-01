@@ -4,7 +4,6 @@ use std::{
     time::Duration,
 };
 
-use ads1293_demo::driver::registers::data;
 use normal_data::Data;
 
 pub fn udp_transport_thread(udp_server_addr: SocketAddrV4, rx: mpsc::Receiver<Data>) {

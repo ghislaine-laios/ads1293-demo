@@ -32,7 +32,7 @@ export function Demo() {
           yAxis={{
             type: "value",
             boundaryGap: ['20%', '20%'],
-            // scale: true
+            scale: true
           }}
           series={[
             {

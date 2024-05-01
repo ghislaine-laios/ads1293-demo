@@ -110,15 +110,6 @@ fn main() {
             log::debug!("{:?}", data);
 
             data_tx.send(data).unwrap();
-
-            // let str = serde_json::to_string(&data).unwrap();
-            // let str = str.as_bytes();
-            // if !ws_client.is_connected() {
-            //     return;
-            // }
-            // let _ = ws_client
-            //     .send(esp_idf_svc::ws::FrameType::Text(false), str)
-            //     .map_err(|_| log::error!("Failed to send data through ws."));
         })
     }
     .unwrap();
