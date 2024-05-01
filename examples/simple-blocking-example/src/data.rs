@@ -4,7 +4,6 @@ use ads1293_demo::driver::{
     ADS1293,
 };
 use embedded_hal::spi::SpiDevice;
-use esp_idf_svc::hal::delay::FreeRtos;
 
 pub fn init_ads1293<SPI: SpiDevice>(spi: SPI) -> ADS1293<SPI> {
     let mut ads1293 = ADS1293::new(spi);

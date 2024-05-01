@@ -13,7 +13,10 @@ pub fn start_program_blink<P: Pin>(led_pin: &mut PinDriver<'static, P, Output>) 
     }
 }
 
-pub fn in_program_blink<P: Pin>(led_pin: &mut PinDriver<'static, P, Output>, is_high_now: &mut bool) {
+pub fn in_program_blink<P: Pin>(
+    led_pin: &mut PinDriver<'static, P, Output>,
+    is_high_now: &mut bool,
+) {
     if *is_high_now {
         led_pin.set_low().unwrap();
     } else {

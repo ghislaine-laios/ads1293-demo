@@ -1,6 +1,4 @@
-use std::{
-    sync::{mpsc, Arc, Mutex}, thread, time::Duration
-};
+use std::{sync::mpsc, thread, time::Duration};
 
 use esp_idf_svc::{
     eventloop::EspSystemEventLoop,
@@ -14,14 +12,13 @@ use esp_idf_svc::{
     nvs::EspDefaultNvsPartition,
     timer::EspTaskTimerService,
     wifi::{BlockingWifi, EspWifi},
-    ws::client::{EspWebSocketClient, EspWebSocketClientConfig},
 };
-use normal_data::{Data, PUSH_DATA_ENDPOINT_WS};
+use normal_data::Data;
 use simple_blocking_example::{
     data::{init_ads1293, retrieve_data_once},
     led::{in_program_blink, start_program_blink},
     settings::Settings,
-    transport::{create_ws_client, discover_service, udp::udp_transport_thread},
+    transport::{discover_service, udp::udp_transport_thread},
     wifi::connect_wifi,
 };
 
@@ -60,7 +57,8 @@ fn main() {
         wifi
     };
 
-    let (ws_socket_addr, udp_socket_addr) = discover_service(settings.service.broadcast_port).unwrap();
+    let (_ws_socket_addr, udp_socket_addr) =
+        discover_service(settings.service.broadcast_port).unwrap();
 
     // let mut ws_client = create_ws_client(ws_socket_addr);
 
@@ -94,9 +92,10 @@ fn main() {
 
     let (data_tx, data_rx) = mpsc::sync_channel(1);
 
-    let _transport_thread = thread::Builder::new().stack_size(8192).spawn(move || {
-        udp_transport_thread(udp_socket_addr, data_rx)
-    }).unwrap();
+    let _transport_thread = thread::Builder::new()
+        .stack_size(8192)
+        .spawn(move || udp_transport_thread(udp_socket_addr, data_rx))
+        .unwrap();
 
     let timer_service = EspTaskTimerService::new().unwrap();
 
