@@ -5,14 +5,16 @@ use esp_idf_svc::{
     hal::{
         delay::FreeRtos,
         gpio::PinDriver,
+        i2c::{I2cConfig, I2cDriver},
         peripherals::Peripherals,
         spi::{self, SpiDeviceDriver, SpiDriver, SpiDriverConfig},
-        units::Hertz,
+        units::{FromValueType, Hertz},
     },
     nvs::EspDefaultNvsPartition,
     timer::EspTaskTimerService,
     wifi::{BlockingWifi, EspWifi},
 };
+use esp_idf_sys::{i2c_get_timeout, i2c_set_timeout};
 use normal_data::Data;
 use simple_blocking_example::{
     data::{init_ads1293, retrieve_data_once},
@@ -87,7 +89,46 @@ fn main() {
         log::info!("ADS1293 has been initialized.");
 
         ads1293
-        // Arc::new(Mutex::new(ads1293))
+    };
+
+    let mut bno055 = {
+        let sda = peripherals.pins.gpio21;
+        let scl = peripherals.pins.gpio22;
+
+        let i2c = {
+            let baudrate = 100u32.kHz();
+            let config = I2cConfig::new().baudrate(baudrate.into());
+
+            let i2c = I2cDriver::new(peripherals.i2c0, sda, scl, &config).unwrap();
+
+            #[allow(unused_labels)]
+            'set_i2c_timeout: {
+                let i2c_port = i2c.port();
+
+                let mut timeout: std::os::raw::c_int = 0;
+
+                unsafe { i2c_get_timeout(i2c_port, &mut timeout) };
+
+                log::info!("Current i2c timeout: {}", timeout);
+
+                timeout = 200_000;
+
+                unsafe { i2c_set_timeout(i2c_port, timeout) };
+
+                log::info!("Current i2c timeout is set to: {}", timeout);
+            }
+
+            i2c
+        };
+
+        let mut bno055 = bno055::Bno055::new(i2c);
+
+        bno055.init(&mut FreeRtos).unwrap();
+
+        bno055.set_mode(bno055::BNO055OperationMode::NDOF, &mut FreeRtos)
+            .unwrap();
+
+        bno055
     };
 
     let (data_tx, data_rx) = mpsc::sync_channel(1);
@@ -102,10 +143,11 @@ fn main() {
     let timer = {
         let mut id = 0;
         timer_service.timer(move || {
-            let data = retrieve_data_once(&mut ads1293);
+            let ecg = retrieve_data_once(&mut ads1293);
+            let quaternion = bno055.quaternion().unwrap();
 
             id += 1;
-            let data = Data { id, value: data };
+            let data = Data { id, ecg, quaternion };
             log::debug!("{:?}", data);
 
             data_tx.send(data).unwrap();
