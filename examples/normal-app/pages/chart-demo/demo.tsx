@@ -2,11 +2,26 @@ import { EChart } from "@kbox-labs/react-echarts";
 import useWebSocket, { ReadyState } from "react-use-websocket";
 import { push_data_url } from "../../src/config";
 import { useEffect, useReducer, useRef, useState } from "react";
+import { Euler, Quaternion } from "three";
 
 export function Demo() {
-  useEcgData();
+  const data = useData();
 
-  const [data, _] = useEcgData();
+  const [ecg_data, _] = useEcgData(data);
+
+  let quaternion: Quaternion | null = data
+    ? new Quaternion(
+        data[1].quaternion[0],
+        data[1].quaternion[1],
+        data[1].quaternion[2],
+        data[1].quaternion[3]
+      )
+    : null;
+
+  let euler = quaternion ? new Euler().setFromQuaternion(quaternion!) : null;
+  // if (euler) {
+  //   euler.setFromQuaternion(quaternion!);
+  // }
 
   const xLabels = useRef([] as number[]);
   if (xLabels.current.length == 0) {
@@ -23,27 +38,30 @@ export function Demo() {
           className="h-full"
           renderer={"canvas"}
           onClick={() => console.log("clicked!")}
-          // dataset={{
-          //   source: data,
-          // }}
           xAxis={{
             data: xLabels.current,
           }}
           yAxis={{
             type: "value",
-            boundaryGap: ['20%', '20%'],
-            scale: true
+            boundaryGap: ["20%", "20%"],
+            scale: true,
           }}
           series={[
             {
               type: "line",
               smooth: true,
-              data: data as number[],
+              data: ecg_data as number[],
               showSymbol: false,
             },
           ]}
         />
       </div>
+      {euler ? (
+        <div>
+          Orientation: X = {radians_to_degrees(euler.x)}, Y ={" "}
+          {radians_to_degrees(euler.y)}, Z = {radians_to_degrees(euler.z)}
+        </div>
+      ) : null}
     </main>
   );
 }
@@ -59,13 +77,13 @@ function useLogMsg(lastJsonMessage: any, readyState: ReadyState) {
   }, [lastJsonMessage, readyState]);
 }
 
-const DATA_ARR_LEN = 60 * 5;
-const ECG_LINE_WIDTH = 10;
+type Data = [
+  number,
+  { id: number; ecg: number; quaternion: [number, number, number, number] },
+];
 
-type EcgData = [number, { id: number; value: number }];
-
-function useEcgData(): [(number | null)[], number] {
-  const { lastJsonMessage, readyState } = useWebSocket<EcgData>(push_data_url, {
+function useData(): Data | null {
+  const { lastJsonMessage, readyState } = useWebSocket<Data>(push_data_url, {
     heartbeat: {
       message: "ping",
       returnMessage: "pong",
@@ -76,6 +94,13 @@ function useEcgData(): [(number | null)[], number] {
 
   useLogMsg(lastJsonMessage, readyState);
 
+  return lastJsonMessage;
+}
+
+const DATA_ARR_LEN = 60 * 5;
+const ECG_LINE_WIDTH = 10;
+
+function useEcgData(data: Data | null): [(number | null)[], number] {
   const data_arr = useRef(null as unknown as (number | null)[]);
 
   function clearDataArr() {
@@ -106,15 +131,23 @@ function useEcgData(): [(number | null)[], number] {
   const [currentDataProcessorID, setCurrentDataProcessorID] = useState(-1);
 
   useEffect(() => {
-    if (!lastJsonMessage) return;
-    if (currentDataProcessorID != lastJsonMessage[0]) {
+    if (!data) return;
+    if (currentDataProcessorID != data[0]) {
       clearDataArr();
-      setCurrentDataProcessorID(lastJsonMessage[0]);
+      setCurrentDataProcessorID(data[0]);
     }
 
-    updateDataArr(lastJsonMessage[1].id, lastJsonMessage[1].value);
+    updateDataArr(data[1].id, data[1].ecg);
     increaseNonce();
-  }, [lastJsonMessage]);
+  }, [data]);
 
   return [data_arr.current, nonce];
+}
+
+// Define a function named radians_to_degrees that converts radians to degrees.
+function radians_to_degrees(radians: number) {
+  // Store the value of pi.
+  var pi = Math.PI;
+  // Multiply radians by 180 divided by pi to convert to degrees.
+  return radians * (180 / pi);
 }
