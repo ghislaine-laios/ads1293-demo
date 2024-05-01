@@ -145,7 +145,13 @@ mod debug {
             for i in 1..1000 {
                 let buf = serde_json::to_vec(&Data {
                     id: i,
-                    value: i * 2,
+                    ecg: i * 2,
+                    quaternion: mint::Quaternion::from([
+                        -0.110839844,
+                        -0.06317139,
+                        0.00018310547,
+                        0.9918213,
+                    ]),
                 })
                 .unwrap();
                 socket.send(&buf[..]).await.unwrap();

@@ -121,7 +121,13 @@ mod tests {
             for i in 0..total_num {
                 data_arr.push(Data {
                     id: i,
-                    value: i * 2,
+                    ecg: i * 2,
+                    quaternion: mint::Quaternion::from([
+                        -0.110839844,
+                        -0.06317139,
+                        0.00018310547,
+                        0.9918213,
+                    ]),
                 })
             }
 
