@@ -33,7 +33,7 @@ export function Demo() {
 
   return (
     <main>
-      <div className="w-full h-[600px]">
+      <div className="w-full h-[1000px]">
         <EChart
           className="h-full"
           renderer={"canvas"}
@@ -43,8 +43,10 @@ export function Demo() {
           }}
           yAxis={{
             type: "value",
-            boundaryGap: ["20%", "20%"],
-            scale: true,
+            // boundaryGap: ["20%", "20%"],
+            // scale: true,
+            max: 6200000,
+            min: 5960000
           }}
           series={[
             {
