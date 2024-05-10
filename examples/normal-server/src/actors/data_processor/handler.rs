@@ -52,9 +52,10 @@ impl WebsocketActorContextHandler for ReceiveDataFromHardware {
                 data::ActiveModel {
                     data_transaction_id: Set(self.data_transaction.id),
                     id: Set(data.id.into()),
-                    value: Set(data.ecg.try_into().map_err(|_| {
-                        DataProcessingError::DataValueOutOfRange(data.id, data.ecg)
-                    })?),
+                    ecg1: Set(data.ecg.0 as i32),
+                    ecg2: Set(data.ecg.1 as i32),
+                    quaternion: Set(serde_json::to_value(&data.quaternion).unwrap()),
+                    accel: Set(serde_json::to_value(&data.accel).unwrap()),
                 },
                 Duration::from_millis(200),
             )

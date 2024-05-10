@@ -1,4 +1,4 @@
-import { EChart } from "@kbox-labs/react-echarts";
+import { EChart, EChartProps } from "@kbox-labs/react-echarts";
 import useWebSocket, { ReadyState } from "react-use-websocket";
 import { push_data_url } from "../../src/config";
 import { useEffect, useReducer, useRef, useState } from "react";
@@ -19,9 +19,10 @@ export function Demo() {
     : null;
 
   let euler = quaternion ? new Euler().setFromQuaternion(quaternion!) : null;
-  // if (euler) {
-  //   euler.setFromQuaternion(quaternion!);
-  // }
+
+  let accel = data
+    ? data![1].accel.map((value) => Number(value.toPrecision(2)))
+    : null;
 
   const xLabels = useRef([] as number[]);
   if (xLabels.current.length == 0) {
@@ -31,37 +32,87 @@ export function Demo() {
     });
   }
 
+  const yAxis = {
+    type: "value",
+    boundaryGap: ["10%", "10%"],
+    scale: true,
+  } as EChartProps["yAxis"];
+
   return (
     <main>
-      <div className="w-full h-[1000px]">
+      <div className="flex flex-col w-full h-[1500px]">
         <EChart
-          className="h-full"
+          className="flex-1 basis-1/3"
           renderer={"canvas"}
           onClick={() => console.log("clicked!")}
           xAxis={{
             data: xLabels.current,
           }}
-          yAxis={{
-            type: "value",
-            // boundaryGap: ["20%", "20%"],
-            // scale: true,
-            max: 6200000,
-            min: 5960000
-          }}
+          yAxis={yAxis}
           series={[
             {
               type: "line",
               smooth: true,
-              data: ecg_data as number[],
+              data: ecg_data.map((data) =>
+                data ? data[0] : (null as unknown as number)
+              ),
               showSymbol: false,
             },
           ]}
         />
+        <EChart
+          className="flex-1 basis-1/3"
+          renderer="canvas"
+          xAxis={{ data: xLabels.current }}
+          yAxis={yAxis}
+          series={[
+            {
+              type: "line",
+              smooth: true,
+              data: ecg_data.map((data) =>
+                data ? data[1] : (null as unknown as number)
+              ),
+              showSymbol: false,
+              lineStyle: {
+                color: "green",
+              },
+            },
+          ]}
+        ></EChart>
+        <EChart
+          className="flex1 basis-1/3"
+          renderer="canvas"
+          xAxis={{ data: xLabels.current }}
+          yAxis={yAxis}
+          series={[
+            {
+              type: "line",
+              smooth: true,
+              data: ecg_data.map((data) =>
+                data ? data[1] - data[0] : (null as unknown as number)
+              ),
+              showSymbol: false,
+              lineStyle: {
+                color: "black",
+              },
+            },
+          ]}
+        ></EChart>
       </div>
       {euler ? (
         <div>
           Orientation: X = {radians_to_degrees(euler.x)}, Y ={" "}
           {radians_to_degrees(euler.y)}, Z = {radians_to_degrees(euler.z)}
+          <br />
+          Accel:
+          <div className="inline-flex gap-4 font-mono">
+            {accel!.map((value, i) => (
+              <span className="w-[100px]" key={i}>
+                {value >= 0 ? "+" : ""}
+                {value == 0 ? "0.00" : value}
+              </span>
+            ))}
+          </div>
         </div>
       ) : null}
     </main>
@@ -81,7 +132,12 @@ function useLogMsg(lastJsonMessage: any, readyState: ReadyState) {
 
 type Data = [
   number,
-  { id: number; ecg: number; quaternion: [number, number, number, number] },
+  {
+    id: number;
+    ecg: [number, number];
+    quaternion: [number, number, number, number];
+    accel: [number, number, number];
+  },
 ];
 
 function useData(): Data | null {
@@ -102,11 +158,14 @@ function useData(): Data | null {
 const DATA_ARR_LEN = 60 * 5;
 const ECG_LINE_WIDTH = 10;
 
-function useEcgData(data: Data | null): [(number | null)[], number] {
-  const data_arr = useRef(null as unknown as (number | null)[]);
+function useEcgData(data: Data | null): [([number, number] | null)[], number] {
+  const data_arr = useRef([] as ([number, number] | null)[]);
 
   function clearDataArr() {
-    data_arr.current = new Array(DATA_ARR_LEN).fill(null) as (number | null)[];
+    data_arr.current = new Array(DATA_ARR_LEN).fill(null) as (
+      | [number, number]
+      | null
+    )[];
   }
 
   function clearRange(start: number, end: number) {
@@ -115,7 +174,7 @@ function useEcgData(data: Data | null): [(number | null)[], number] {
     }
   }
 
-  function updateDataArr(id: number, value: number) {
+  function updateDataArr(id: number, value: [number, number]) {
     let left_index = id % DATA_ARR_LEN;
     let right_index = (left_index + ECG_LINE_WIDTH) % DATA_ARR_LEN;
 

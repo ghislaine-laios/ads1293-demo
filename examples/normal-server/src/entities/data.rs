@@ -10,7 +10,10 @@ pub struct Model {
     pub data_transaction_id: i64,
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: i64,
-    pub value: i32,
+    pub ecg1: i32,
+    pub ecg2: i32,
+    pub quaternion: Json,
+    pub accel: Json,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

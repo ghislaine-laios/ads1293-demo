@@ -116,6 +116,7 @@ pub async fn app() -> anyhow::Result<()> {
 mod debug {
     use std::time::Duration;
 
+    use mint::Vector3;
     use normal_data::Data;
     use tokio::net::UdpSocket;
 
@@ -145,13 +146,14 @@ mod debug {
             for i in 1..1000 {
                 let buf = serde_json::to_vec(&Data {
                     id: i,
-                    ecg: i * 2,
+                    ecg: (i * 2, i * 4),
                     quaternion: mint::Quaternion::from([
                         -0.110839844,
                         -0.06317139,
                         0.00018310547,
                         0.9918213,
                     ]),
+                    accel: Vector3::from([f32::MAX, f32::MAX, f32::MAX]),
                 })
                 .unwrap();
                 socket.send(&buf[..]).await.unwrap();

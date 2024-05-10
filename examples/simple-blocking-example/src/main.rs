@@ -17,7 +17,7 @@ use esp_idf_svc::{
 use esp_idf_sys::{i2c_get_timeout, i2c_set_timeout};
 use normal_data::Data;
 use simple_blocking_example::{
-    data::{init_ads1293, retrieve_data_once},
+    data::{init_ads1293, retrieve_data_two_channel},
     led::{in_program_blink, start_program_blink},
     settings::Settings,
     transport::{discover_service, udp::udp_transport_thread},
@@ -125,7 +125,8 @@ fn main() {
 
         bno055.init(&mut FreeRtos).unwrap();
 
-        bno055.set_mode(bno055::BNO055OperationMode::NDOF, &mut FreeRtos)
+        bno055
+            .set_mode(bno055::BNO055OperationMode::NDOF, &mut FreeRtos)
             .unwrap();
 
         bno055
@@ -143,11 +144,17 @@ fn main() {
     let timer = {
         let mut id = 0;
         timer_service.timer(move || {
-            let ecg = retrieve_data_once(&mut ads1293);
+            let (ecg1, ecg2) = retrieve_data_two_channel(&mut ads1293);
             let quaternion = bno055.quaternion().unwrap();
+            let accel = bno055.linear_acceleration().unwrap();
 
             id += 1;
-            let data = Data { id, ecg, quaternion };
+            let data = Data {
+                id,
+                ecg: (ecg1, ecg2),
+                quaternion,
+                accel,
+            };
             log::debug!("{:?}", data);
 
             data_tx.send(data).unwrap();

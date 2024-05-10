@@ -1,13 +1,15 @@
 use serde::{Deserialize, Serialize};
 
-pub const DATA_SERIALIZE_MAX_LEN: usize = 128;
+pub const DATA_SERIALIZE_MAX_LEN: usize = 180;
 pub const PUSH_DATA_ENDPOINT_WS: &'static str = "/push-data";
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Data {
     pub id: u32,
-    pub ecg: u32,
+    // The first channel & second channel.
+    pub ecg: (u32, u32),
     pub quaternion: mint::Quaternion<f32>,
+    pub accel: mint::Vector3<f32>
 }
 
 impl Data {
@@ -41,7 +43,7 @@ impl ServiceMessage {
 
 #[cfg(test)]
 mod tests {
-    use mint::Quaternion;
+    use mint::{Quaternion, Vector3};
 
     use crate::{
         Data, ServiceMessage, DATA_SERIALIZE_MAX_LEN, SERVICE_MESSAGE_SERIALIZE_MAX_LEN,
@@ -51,9 +53,10 @@ mod tests {
     #[test]
     fn test_sufficient_serialize_max_len() {
         let json = serde_json::to_vec(&Data {
-            id: 1,
-            ecg: 10,
+            id: u32::MAX,
+            ecg: (u32::MAX, u32::MAX),
             quaternion: Quaternion::from([f32::MIN, f32::MIN, f32::MIN, f32::MIN]),
+            accel: Vector3::from([f32::MAX, f32::MAX, f32::MAX])
         })
         .unwrap();
         dbg!(json.len());

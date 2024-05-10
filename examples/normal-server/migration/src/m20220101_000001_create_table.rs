@@ -60,7 +60,10 @@ impl MigrationTrait for Migration {
                                 .from(Data::Table, Data::DataTransactionId)
                                 .to(DataTransaction::Table, DataTransaction::Id),
                         )
-                        .col(ColumnDef::new(Data::Value).integer().not_null())
+                        .col(ColumnDef::new(Data::Ecg1).integer().not_null())
+                        .col(ColumnDef::new(Data::Ecg2).integer().not_null())
+                        .col(ColumnDef::new(Data::Quaternion).json().not_null())
+                        .col(ColumnDef::new(Data::Accel).json().not_null())
                         .to_owned(),
                 )
                 .await?;
@@ -94,5 +97,8 @@ enum Data {
     Table,
     Id,
     DataTransactionId,
-    Value,
+    Ecg1,
+    Ecg2,
+    Quaternion,
+    Accel,
 }

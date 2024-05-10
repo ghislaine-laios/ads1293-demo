@@ -18,7 +18,7 @@ pub mod operator;
 pub mod registers;
 
 pub struct ADS1293<SPI: SpiDevice> {
-    operator: Operator<SPI>,
+    pub operator: Operator<SPI>,
 }
 
 const LOOP_READ_BACK_CONFIG_FIELDS: &'static [registers::DataRegister] = &[
