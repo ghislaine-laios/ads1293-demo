@@ -2,7 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::thread;
-use normal_server::app;
+use normal_server::{app, setup_production_logger};
 
 // Learn more about Tauri commands at https://tauri.app/v1/guides/features/command
 #[tauri::command]
@@ -11,7 +11,7 @@ fn greet(name: &str) -> String {
 }
 
 fn main() {
-    env_logger::init();
+    setup_production_logger();
 
     tauri::Builder::default()
         .setup(|app| {

@@ -1,8 +1,10 @@
-use normal_server::app;
+use std::env;
+
+use normal_server::{app, setup_production_logger};
 
 #[actix_web::main]
 async fn main() -> anyhow::Result<()> {
-    env_logger::init();
+    setup_production_logger();
 
     app().await
 }

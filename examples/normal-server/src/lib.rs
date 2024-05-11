@@ -8,7 +8,7 @@ use migration::{Migrator, MigratorTrait};
 use sea_orm::Database;
 use settings::Settings;
 use smallvec::SmallVec;
-use std::time::Duration;
+use std::{env, time::Duration};
 use tokio::select;
 
 pub mod actors;
@@ -20,8 +20,8 @@ pub mod settings;
 #[cfg(test)]
 pub mod tests_utils;
 
-#[cfg(test)]
-const MODULE_PATH: &'static str = module_path!();
+// #[cfg(test)]
+pub const MODULE_PATH: &'static str = module_path!();
 
 pub async fn app() -> anyhow::Result<()> {
     let settings = Settings::new()?;
@@ -118,6 +118,16 @@ pub async fn app() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+pub fn setup_production_logger() {
+    if env::var("RUST_LOG").is_err() || env::var("RUST_LOG").unwrap().is_empty() {
+        env::set_var("RUST_LOG", "info,sqlx=warn,sea_orm=warn")
+    } else {
+        dbg!(env::var("RUST_LOG").unwrap());
+    }
+
+    env_logger::init();
 }
 
 #[cfg(test)]

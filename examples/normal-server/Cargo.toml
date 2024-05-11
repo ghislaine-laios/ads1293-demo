@@ -47,3 +47,4 @@ once_cell = "1.19.0"
 bytestring = "1.3.1"
 abort-on-drop = "0.2.2"
 mint = { version = "0.5.9", features = ["serde"] }
+network-interface = "2.0.0"

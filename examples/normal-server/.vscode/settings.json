@@ -8,7 +8,8 @@
         "rtype",
         "smallvec",
         "thiserror",
-        "tungstenite"
+        "tungstenite",
+        "WLAN"
     ],
     "rust-analyzer.cargo.buildScripts.invocationLocation": "root",
     "rust-analyzer.check.invocationLocation": "root"
