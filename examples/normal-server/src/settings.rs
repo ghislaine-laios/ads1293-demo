@@ -25,11 +25,14 @@ impl Settings {
 
         let default_settings = include_str!("presets/default_settings.toml");
 
-        let local_settings_path = "./_dev_things/settings.toml";
+        let dev_local_settings_path = "./_dev_things/settings.toml";
+
+        let local_settings_path = "./settings.toml";
 
         let config = Config::builder()
             .add_source(File::from_str(default_settings, FileFormat::Toml))
-            .add_source(File::with_name(local_settings_path).required(false))
+            .add_source(File::with_name(dev_local_settings_path).required(false))
+            .add_source(File::with_name(&local_settings_path).required(false))
             .build()?
             .try_deserialize()?;
 

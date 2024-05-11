@@ -8,4 +8,4 @@ ip = "255.255.255.255"
 port = 20272
 
 [database]
-url = "postgresql://localhost:20273/example?user=postgres&password=example"
+url = "sqlite::memory:"

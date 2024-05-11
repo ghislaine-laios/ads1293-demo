@@ -26,28 +26,25 @@ const MODULE_PATH: &'static str = module_path!();
 pub async fn app() -> anyhow::Result<()> {
     let settings = Settings::new()?;
 
-    let service_broadcaster =
-        ServiceBroadcaster::new(settings.bind_to.clone(), settings.broadcast.clone()).await?;
-    let service_manager = ServiceBroadcastManager::new(service_broadcaster);
-    let (launched_service_broadcast_manager, service_broadcast_manager_fut) =
-        service_manager.launch();
-
-    let data_hub = DataHub::new();
-    let (launched_data_hub, data_hub_controller, data_hub_fut) = data_hub.launch();
-
     let bind_to = &settings.bind_to;
     let bind_to = (bind_to.ip.as_str(), bind_to.port);
 
-    let db_coon = Database::connect(&settings.database.url)
-        .await
-        .context("Can't connect to the database")?;
+    let db_coon = actix_rt::time::timeout(Duration::from_secs(3), async {
+        let db_coon = Database::connect(&settings.database.url)
+            .await
+            .context("can't connect to the database")?;
 
-    actix_rt::time::timeout(Duration::from_secs(3), db_coon.ping())
-        .await
-        .context("timeout to ping the database")?
-        .context("failed to ping the database")?;
+        db_coon
+            .ping()
+            .await
+            .context("failed to ping the database")?;
 
-    log::info!("Connected to the database.");
+        log::info!("Connected to the database.");
+
+        anyhow::Ok(db_coon)
+    })
+    .await
+    .context("timeout to establish the connection to the database")??;
 
     // Confirm the application of pending migrations (in production).
 
@@ -57,8 +54,19 @@ pub async fn app() -> anyhow::Result<()> {
     if !pending_migrations.is_empty() {
         log::info!("Applying pending migrations...");
         // return Err(anyhow::anyhow!("Pending migrations await application."));
-        Migrator::fresh(&db_coon).await.expect("Failed to fresh the database");
+        Migrator::fresh(&db_coon)
+            .await
+            .expect("Failed to fresh the database");
     }
+
+    let service_broadcaster =
+        ServiceBroadcaster::new(settings.bind_to.clone(), settings.broadcast.clone()).await?;
+    let service_manager = ServiceBroadcastManager::new(service_broadcaster);
+    let (launched_service_broadcast_manager, service_broadcast_manager_fut) =
+        service_manager.launch();
+
+    let data_hub = DataHub::new();
+    let (launched_data_hub, data_hub_controller, data_hub_fut) = data_hub.launch();
 
     let udp_data_processor_join_handle = UdpDataProcessor::launch_inline(
         db_coon.clone(),

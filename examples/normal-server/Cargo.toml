@@ -33,6 +33,7 @@ url = "2.5.0"
 normal-data = { path = "../normal-data" }
 sea-orm = { version = "0.12.14", features = [
     "sqlx-postgres",
+    "sqlx-sqlite",
     "runtime-tokio-native-tls",
     "macros",
     "debug-print",

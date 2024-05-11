@@ -4,7 +4,7 @@ import vike from 'vike/plugin'
 
 // https://vitejs.dev/config/
 export default defineConfig(async () => ({
-  plugins: [react(), vike()],
+  plugins: [react(), vike({prerender: true})],
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
