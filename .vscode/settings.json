@@ -1,7 +1,9 @@
 {
   "editor.tabSize": 4,
   "cSpell.words": [
+    "actix",
     "bitfield",
-    "CNFG"
+    "CNFG",
+    "Tauri"
   ]
 }

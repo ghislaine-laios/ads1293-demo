@@ -1,5 +1,3 @@
-#![feature(map_try_insert)]
-
 use crate::actors::{data_hub::DataHub, service_broadcast_manager, udp::UdpDataProcessor};
 use actix_web::{middleware::Logger, web, App, HttpServer};
 use actors::{
