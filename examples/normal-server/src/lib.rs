@@ -57,7 +57,9 @@ pub async fn app() -> anyhow::Result<()> {
         .await
         .expect("Failed to get the pending migrations");
     if !pending_migrations.is_empty() {
-        return Err(anyhow::anyhow!("Pending migrations await application."));
+        log::info!("Applying pending migrations...");
+        // return Err(anyhow::anyhow!("Pending migrations await application."));
+        Migrator::fresh(&db_coon).await.expect("Failed to fresh the database");
     }
 
     let udp_data_processor_join_handle = UdpDataProcessor::launch_inline(
