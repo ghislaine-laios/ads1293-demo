@@ -2,8 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::thread;
-
-// use normal_server::app;
+use normal_server::app;
 
 // Learn more about Tauri commands at https://tauri.app/v1/guides/features/command
 #[tauri::command]
@@ -16,7 +15,7 @@ fn main() {
 
     tauri::Builder::default()
         .setup(|app| {
-            // thread::spawn(move || run_actix_web().unwrap());
+            thread::spawn(move || run_actix_web().unwrap());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![greet])
@@ -24,7 +23,7 @@ fn main() {
         .expect("error while running tauri application");
 }
 
-// #[actix_web::main]
-// async fn run_actix_web() -> anyhow::Result<()> {
-//     app().await
-// }
+#[actix_web::main]
+async fn run_actix_web() -> anyhow::Result<()> {
+    app().await
+}
