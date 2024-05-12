@@ -52,6 +52,14 @@ impl Settings {
 
     fn replace_broadcast(&mut self) -> anyhow::Result<()> {
         let network_interfaces = NetworkInterface::show().unwrap();
+
+        for interface in network_interfaces.iter() {
+            log::info!(
+                "Found network interface{:?}",
+                (&interface.name, interface.addr[1].broadcast())
+            );
+        }
+
         let wlan = network_interfaces
             .into_iter()
             .filter(|interface| interface.name == "WLAN")
@@ -60,7 +68,7 @@ impl Settings {
         if wlan.len() == 0 {
             return Err(anyhow::anyhow!("cannot find WLAN interface"));
         } else if wlan.len() > 1 {
-            unreachable!("There are more than one network interfaces with name 'WLAN'!")
+            log::warn!("There are more than one network interfaces with name 'WLAN'! Auto select the first.")
         }
 
         let wlan = &wlan[0];

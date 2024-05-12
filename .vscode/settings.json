@@ -4,6 +4,7 @@
     "actix",
     "bitfield",
     "CNFG",
-    "Tauri"
+    "Tauri",
+    "WLAN"
   ]
 }
