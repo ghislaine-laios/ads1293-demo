@@ -28,13 +28,16 @@ impl Settings {
 
         let default_settings = include_str!("presets/default_settings.toml");
 
-        let dev_local_settings_path = "./_dev_things/settings.toml";
+        let dev_settings_path = "./_dev_things/settings.toml";
+
+        let dev_local_settings_path = "./_dev_things/settings.local.toml";
 
         let local_settings_path = "./settings.toml";
 
         let mut config: Settings = Config::builder()
             .add_source(File::from_str(default_settings, FileFormat::Toml))
-            .add_source(File::with_name(dev_local_settings_path).required(false))
+            .add_source(File::with_name(dev_settings_path).required(false))
+            .add_source(File::with_name(&dev_local_settings_path).required(false))
             .add_source(File::with_name(&local_settings_path).required(false))
             .build()?
             .try_deserialize()?;
@@ -51,14 +54,14 @@ impl Settings {
     }
 
     fn replace_broadcast(&mut self) -> anyhow::Result<()> {
+        let network_interfaces = NetworkInterface::show().unwrap();
         for interface in network_interfaces.iter() {
             log::info!(
                 "Found network interface{:?}",
-                (&interface.name, interface.addr[1].broadcast())
+                (&interface.name, &interface.addr)
             );
         }
 
-        let network_interfaces = NetworkInterface::show().unwrap();
         let mut wlan = network_interfaces
             .iter()
             .filter(|interface| interface.name == "WLAN")

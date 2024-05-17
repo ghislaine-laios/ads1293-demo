@@ -130,15 +130,15 @@ fn main() {
         let mut id = 0;
         let (mut bno055, mut mlx90614) = setup_i2c_devices(&i2c);
 
-        let obj1_temp = mlx90614.object1_temperature().unwrap();
-        let ambient_temp = mlx90614.ambient_temperature().unwrap();
-
         loop {
             timer.after(Duration::from_millis(20)).await.unwrap();
 
             let (ecg1, ecg2) = retrieve_data_two_channel(&mut ads1293);
             let quaternion = bno055.quaternion().unwrap();
             let accel = bno055.linear_acceleration().unwrap();
+
+            let obj1_temp = mlx90614.object1_temperature().unwrap();
+            let ambient_temp = mlx90614.ambient_temperature().unwrap();
 
             id += 1;
             let data = Data {

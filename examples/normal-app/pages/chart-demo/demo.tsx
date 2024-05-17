@@ -24,6 +24,8 @@ export function Demo() {
     ? data![1].accel.map((value) => Number(value.toPrecision(2)))
     : null;
 
+  let temperature = data ? data![1].temperature : null;
+
   const xLabels = useRef([] as number[]);
   if (xLabels.current.length == 0) {
     xLabels.current = new Array(DATA_ARR_LEN).fill(0) as number[];
@@ -113,6 +115,12 @@ export function Demo() {
               </span>
             ))}
           </div>
+          <br />
+          Temperature:
+          <div className="inline-flex gap-4 font-mono">
+            <span className="w-[200px]">obj1 = {temperature!.object1}</span>
+            <span className="w-[200px]">ambient =  {temperature!.ambient}</span>
+          </div>
         </div>
       ) : null}
     </main>
@@ -137,6 +145,7 @@ type Data = [
     ecg: [number, number];
     quaternion: [number, number, number, number];
     accel: [number, number, number];
+    temperature: { object1: number; ambient: number };
   },
 ];
 
