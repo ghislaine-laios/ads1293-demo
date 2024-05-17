@@ -135,7 +135,7 @@ mod debug {
     use std::time::Duration;
 
     use mint::Vector3;
-    use normal_data::Data;
+    use normal_data::{Data, Temperature};
     use tokio::net::UdpSocket;
 
     use crate::{actors::data_hub, app, settings::Settings, tests_utils::create_logger_builder};
@@ -172,6 +172,10 @@ mod debug {
                         0.9918213,
                     ]),
                     accel: Vector3::from([f32::MAX, f32::MAX, f32::MAX]),
+                    temperature: Temperature {
+                        object1: f32::MAX,
+                        ambient: f32::MAX,
+                    },
                 })
                 .unwrap();
                 socket.send(&buf[..]).await.unwrap();

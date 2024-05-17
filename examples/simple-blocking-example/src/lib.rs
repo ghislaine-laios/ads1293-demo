@@ -4,3 +4,4 @@ pub mod led;
 pub mod settings;
 pub mod transport;
 pub mod wifi;
+pub mod device;

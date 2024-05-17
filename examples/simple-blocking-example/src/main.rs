@@ -1,5 +1,12 @@
-use std::{sync::mpsc, thread, time::Duration};
+use std::{
+    cell::{OnceCell, RefCell},
+    pin::pin,
+    sync::mpsc,
+    thread,
+    time::Duration,
+};
 
+use embedded_hal_bus::i2c::RefCellDevice;
 use esp_idf_svc::{
     eventloop::EspSystemEventLoop,
     hal::{
@@ -8,6 +15,7 @@ use esp_idf_svc::{
         i2c::{I2cConfig, I2cDriver},
         peripherals::Peripherals,
         spi::{self, SpiDeviceDriver, SpiDriver, SpiDriverConfig},
+        task,
         units::{FromValueType, Hertz},
     },
     nvs::EspDefaultNvsPartition,
@@ -15,9 +23,10 @@ use esp_idf_svc::{
     wifi::{BlockingWifi, EspWifi},
 };
 use esp_idf_sys::{i2c_get_timeout, i2c_set_timeout};
-use normal_data::Data;
+use normal_data::{Data, Temperature};
 use simple_blocking_example::{
     data::{init_ads1293, retrieve_data_two_channel},
+    device::{setup_i2c, setup_i2c_devices},
     led::{in_program_blink, start_program_blink},
     settings::Settings,
     transport::{discover_service, udp::udp_transport_thread},
@@ -62,8 +71,6 @@ fn main() {
     let (_ws_socket_addr, udp_socket_addr) =
         discover_service(settings.service.broadcast_port).unwrap();
 
-    // let mut ws_client = create_ws_client(ws_socket_addr);
-
     let mut ads1293 = {
         let spi2 = peripherals.spi2;
         let sclk = peripherals.pins.gpio14;
@@ -91,47 +98,6 @@ fn main() {
         ads1293
     };
 
-    let mut bno055 = {
-        let sda = peripherals.pins.gpio21;
-        let scl = peripherals.pins.gpio22;
-
-        let i2c = {
-            let baudrate = 100u32.kHz();
-            let config = I2cConfig::new().baudrate(baudrate.into());
-
-            let i2c = I2cDriver::new(peripherals.i2c0, sda, scl, &config).unwrap();
-
-            #[allow(unused_labels)]
-            'set_i2c_timeout: {
-                let i2c_port = i2c.port();
-
-                let mut timeout: std::os::raw::c_int = 0;
-
-                unsafe { i2c_get_timeout(i2c_port, &mut timeout) };
-
-                log::info!("Current i2c timeout: {}", timeout);
-
-                timeout = 200_000;
-
-                unsafe { i2c_set_timeout(i2c_port, timeout) };
-
-                log::info!("Current i2c timeout is set to: {}", timeout);
-            }
-
-            i2c
-        };
-
-        let mut bno055 = bno055::Bno055::new(i2c);
-
-        bno055.init(&mut FreeRtos).unwrap();
-
-        bno055
-            .set_mode(bno055::BNO055OperationMode::NDOF, &mut FreeRtos)
-            .unwrap();
-
-        bno055
-    };
-
     let (data_tx, data_rx) = mpsc::sync_channel(1);
 
     let _transport_thread = thread::Builder::new()
@@ -141,9 +107,35 @@ fn main() {
 
     let timer_service = EspTaskTimerService::new().unwrap();
 
-    let timer = {
+    let mut timer = timer_service.timer_async().unwrap();
+
+    let mut is_pin_high = true;
+    thread::spawn(move || loop {
+        in_program_blink(&mut led_pin, &mut is_pin_high);
+        FreeRtos::delay_ms(1000);
+        log::debug!("wifi: {:?}", wifi.is_up().unwrap())
+    });
+
+    task::block_on(pin!(async move {
+        let sda = peripherals.pins.gpio21;
+        let scl = peripherals.pins.gpio22;
+
+        let baudrate = 100u32.kHz();
+        let config = I2cConfig::new().baudrate(baudrate.into());
+
+        let i2c = I2cDriver::new(peripherals.i2c0, sda, scl, &config).unwrap();
+
+        let i2c = setup_i2c(i2c);
+
         let mut id = 0;
-        timer_service.timer(move || {
+        let (mut bno055, mut mlx90614) = setup_i2c_devices(&i2c);
+
+        let obj1_temp = mlx90614.object1_temperature().unwrap();
+        let ambient_temp = mlx90614.ambient_temperature().unwrap();
+
+        loop {
+            timer.after(Duration::from_millis(20)).await.unwrap();
+
             let (ecg1, ecg2) = retrieve_data_two_channel(&mut ads1293);
             let quaternion = bno055.quaternion().unwrap();
             let accel = bno055.linear_acceleration().unwrap();
@@ -154,19 +146,14 @@ fn main() {
                 ecg: (ecg1, ecg2),
                 quaternion,
                 accel,
+                temperature: Temperature {
+                    object1: obj1_temp,
+                    ambient: ambient_temp,
+                },
             };
             log::debug!("{:?}", data);
 
             data_tx.send(data).unwrap();
-        })
-    }
-    .unwrap();
-    timer.every(Duration::from_millis(20)).unwrap();
-
-    let mut is_pin_high = true;
-    loop {
-        in_program_blink(&mut led_pin, &mut is_pin_high);
-        FreeRtos::delay_ms(1000);
-        log::debug!("wifi: {:?}", wifi.is_up().unwrap())
-    }
+        }
+    }));
 }

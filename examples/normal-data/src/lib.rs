@@ -1,7 +1,13 @@
 use serde::{Deserialize, Serialize};
 
-pub const DATA_SERIALIZE_MAX_LEN: usize = 180;
+pub const DATA_SERIALIZE_MAX_LEN: usize = 256;
 pub const PUSH_DATA_ENDPOINT_WS: &'static str = "/push-data";
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Temperature {
+    pub object1: f32,
+    pub ambient: f32,
+}
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Data {
@@ -9,7 +15,8 @@ pub struct Data {
     // The first channel & second channel.
     pub ecg: (u32, u32),
     pub quaternion: mint::Quaternion<f32>,
-    pub accel: mint::Vector3<f32>
+    pub accel: mint::Vector3<f32>,
+    pub temperature: Temperature,
 }
 
 impl Data {
@@ -56,7 +63,11 @@ mod tests {
             id: u32::MAX,
             ecg: (u32::MAX, u32::MAX),
             quaternion: Quaternion::from([f32::MIN, f32::MIN, f32::MIN, f32::MIN]),
-            accel: Vector3::from([f32::MAX, f32::MAX, f32::MAX])
+            accel: Vector3::from([f32::MAX, f32::MAX, f32::MAX]),
+            temperature: crate::Temperature {
+                object1: f32::MAX,
+                ambient: f32::MAX,
+            },
         })
         .unwrap();
         dbg!(json.len());

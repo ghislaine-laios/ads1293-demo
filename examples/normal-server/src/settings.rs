@@ -1,6 +1,6 @@
-use anyhow::Context;
+use anyhow::{anyhow, Context};
 use futures::io::ReuniteError;
-use network_interface::{NetworkInterface, NetworkInterfaceConfig};
+use network_interface::{Addr, NetworkInterface, NetworkInterfaceConfig};
 use normal_data::BindTo;
 use serde::Deserialize;
 
@@ -52,22 +52,50 @@ impl Settings {
 
     fn replace_broadcast(&mut self) -> anyhow::Result<()> {
         let network_interfaces = NetworkInterface::show().unwrap();
-        let wlan = network_interfaces
-            .into_iter()
+        let mut wlan = network_interfaces
+            .iter()
             .filter(|interface| interface.name == "WLAN")
             .collect::<Vec<_>>();
 
         if wlan.len() == 0 {
-            return Err(anyhow::anyhow!("cannot find WLAN interface"));
+            log::error!("Cannot find a WLAN interface. Choose the first interface with broadcast address as default.");
+
+            // We want to find some interfaces with one or more broadcast addresses,
+            // which are more likely interfaces connected to a WLAN network.
+            let interfaces = network_interfaces
+                .iter()
+                .filter(|interface| {
+                    interface
+                        .addr
+                        .iter()
+                        .filter(|addr| addr.broadcast().is_some())
+                        .count()
+                        > 0
+                })
+                .collect::<Vec<_>>();
+
+            if interfaces.len() == 0 {
+                let error = anyhow!("No alternative interface was found.");
+                log::error!("{}", error);
+                return Err(error);
+            }
+
+            wlan = interfaces;
         } else if wlan.len() > 1 {
             unreachable!("There are more than one network interfaces with name 'WLAN'!")
         }
 
         let wlan = &wlan[0];
 
-        let v4_addr = wlan.addr.get(1).unwrap();
+        let addr = wlan
+            .addr
+            .iter()
+            .filter(|addr| addr.broadcast().is_some())
+            .collect::<Vec<_>>();
 
-        let broadcast_addr = v4_addr.broadcast().unwrap();
+        let addr = addr[0];
+
+        let broadcast_addr = addr.broadcast().unwrap();
 
         self.broadcast.ip = broadcast_addr.to_string();
 
@@ -85,7 +113,7 @@ mod debug {
         env_logger::init();
         let network_interfaces = NetworkInterface::show().unwrap();
         for interface in network_interfaces {
-            log::info!("{:?}", (interface.name, interface.addr[1].broadcast()));
+            log::info!("{:?}", (interface.name, interface.addr));
         }
     }
 }

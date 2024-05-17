@@ -61,7 +61,7 @@ mod tests {
     use abort_on_drop::ChildTask;
     use futures::{SinkExt, StreamExt};
     use mint::Vector3;
-    use normal_data::Data;
+    use normal_data::{Data, Temperature};
     use std::time::Duration;
     use tokio::select;
     use tokio_tungstenite::connect_async;
@@ -130,6 +130,10 @@ mod tests {
                         0.9918213,
                     ]),
                     accel: Vector3::from([f32::MAX, f32::MAX, f32::MAX]),
+                    temperature: Temperature {
+                        object1: f32::MAX,
+                        ambient: f32::MAX,
+                    },
                 })
             }
 
