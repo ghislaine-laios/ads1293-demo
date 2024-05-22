@@ -17,4 +17,11 @@ impl Mutation {
     ) -> Result<sea_orm::InsertResult<data::ActiveModel>, sea_orm::prelude::DbErr> {
         Data::insert_many(models).exec(&self.0).await
     }
+
+    pub async fn insert_data(
+        &self,
+        model: data::ActiveModel,
+    ) -> Result<sea_orm::InsertResult<data::ActiveModel>, sea_orm::prelude::DbErr> {
+        Data::insert(model).exec(&self.0).await
+    }
 }

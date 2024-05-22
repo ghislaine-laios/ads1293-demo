@@ -65,7 +65,7 @@ pub async fn app() -> anyhow::Result<()> {
     let (launched_service_broadcast_manager, service_broadcast_manager_fut) =
         service_manager.launch();
 
-    let data_hub = DataHub::new();
+    let data_hub = DataHub::new(db_coon.clone());
     let (launched_data_hub, data_hub_controller, data_hub_fut) = data_hub.launch();
 
     let udp_data_processor_join_handle = UdpDataProcessor::launch_inline(

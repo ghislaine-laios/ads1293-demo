@@ -113,6 +113,8 @@ impl UdpDataProcessor {
 
             log::trace!(data:serde, addr:?; "New data is received.");
 
+
+
             self.watch_dog.do_notify_alive().await.unwrap();
 
             self.data_hub

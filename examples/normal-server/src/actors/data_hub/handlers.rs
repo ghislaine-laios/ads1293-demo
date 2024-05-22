@@ -1,6 +1,12 @@
-use anyhow::{anyhow, Context};
+use std::mem::replace;
 
-use crate::actors::Handler;
+use anyhow::{anyhow, Context};
+use sea_orm::Set;
+
+use crate::{
+    actors::{data_processor::mutation::Mutation, Handler},
+    entities::data,
+};
 
 use super::{
     actions::{self, Action, ControlAction, NewDataFromProcessor},
@@ -157,6 +163,26 @@ impl Handler<actions::NewDataFromProcessor> for DataHub {
     async fn handle(&mut self, action: actions::NewDataFromProcessor) -> Self::Output {
         log::trace!("new data from processor: {:?}", action);
         let NewDataFromProcessor(data_processor_id, data) = action;
+
+        let model = data::ActiveModel {
+            data_transaction_id: Set(data_processor_id as i64),
+            id: Set(data.id.into()),
+            ecg1: Set(data.ecg.0 as i32),
+            ecg2: Set(data.ecg.1 as i32),
+            quaternion: Set(serde_json::to_value(&data.quaternion).unwrap()),
+            accel: Set(serde_json::to_value(&data.accel).unwrap()),
+        };
+
+        self.data_buffer.push(model);
+
+        if self.data_buffer.len() >= 20 {
+            let buffer = replace(&mut self.data_buffer, Vec::with_capacity(20));
+            self.mutation
+                .bulk_insert_data(buffer.into_iter())
+                .await
+                .unwrap();
+        }
+
         if let Some((id, pusher)) = self.data_pusher.as_ref() {
             // TODO: Refactor this
             let _ = pusher

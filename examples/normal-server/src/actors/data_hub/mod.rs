@@ -1,13 +1,16 @@
+use crate::entities::data;
+
 use self::actions::{
     Action, ControlAction, NewDataFromProcessor, RegisterDataProcessor, RegisterDataPusher,
     UnRegisterDataPusher, UnregisterDataProcessor,
 };
 use super::{
-    data_processor::DataProcessorId,
+    data_processor::{mutation::Mutation, DataProcessorId},
     data_pusher::{DataPusherId, LaunchedDataPusher},
     Handler,
 };
 use normal_data::Data;
+use sea_orm::DatabaseConnection;
 use std::collections::HashSet;
 use tokio::sync::mpsc;
 
@@ -17,16 +20,23 @@ pub mod registration_keepers;
 
 pub const MODULE_PATH: &'static str = module_path!();
 
-#[derive(Default)]
 pub struct DataHub {
+    mutation: Mutation,
+    data_buffer: Vec<data::ActiveModel>,
     data_processors: HashSet<DataProcessorId>,
     data_pusher: Option<(DataPusherId, LaunchedDataPusher)>,
     outdated_data_pusher: Option<(DataPusherId, LaunchedDataPusher)>,
 }
 
 impl DataHub {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(db_coon: DatabaseConnection) -> Self {
+        Self {
+            mutation: Mutation(db_coon),
+            data_buffer: Vec::with_capacity(20),
+            data_processors: Default::default(),
+            data_pusher: None,
+            outdated_data_pusher: None,
+        }
     }
 
     pub fn launch(
