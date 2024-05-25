@@ -6,6 +6,7 @@ use std::{
     time::Duration,
 };
 
+use bno055::mint::Quaternion;
 use embedded_hal_bus::i2c::RefCellDevice;
 use esp_idf_svc::{
     eventloop::EspSystemEventLoop,
@@ -128,17 +129,33 @@ fn main() {
         let i2c = setup_i2c(i2c);
 
         let mut id = 0;
-        let (mut bno055, mut mlx90614) = setup_i2c_devices(&i2c);
+        let mut devices = if settings.only_ecg {
+            None
+        } else {
+            Some(setup_i2c_devices(&i2c))
+        };
 
         loop {
             timer.after(Duration::from_millis(20)).await.unwrap();
 
             let (ecg1, ecg2) = retrieve_data_two_channel(&mut ads1293);
-            let quaternion = bno055.quaternion().unwrap();
-            let accel = bno055.linear_acceleration().unwrap();
 
-            let obj1_temp = mlx90614.object1_temperature().unwrap();
-            let ambient_temp = mlx90614.ambient_temperature().unwrap();
+            let (quaternion, accel, obj1_temp, ambient_temp) = if let Some(devices) = &mut devices {
+                let quaternion = devices.0.quaternion().unwrap();
+                let accel = devices.0.linear_acceleration().unwrap();
+
+                let obj1_temp = devices.1.object1_temperature().unwrap();
+                let ambient_temp = devices.1.ambient_temperature().unwrap();
+
+                (quaternion, accel, obj1_temp, ambient_temp)
+            } else {
+                (
+                    [0f32, 0f32, 0f32, 0f32].into(),
+                    [0f32, 0f32, 0f32].into(),
+                    0f32,
+                    0f32,
+                )
+            };
 
             id += 1;
             let data = Data {

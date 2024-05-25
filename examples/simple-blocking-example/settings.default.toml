@@ -1,2 +1,3 @@
+only_ecg = false
 [service]
 broadcast_port = 20272

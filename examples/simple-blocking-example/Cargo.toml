@@ -44,6 +44,7 @@ bno055 = { version = "0.4.0", features = ["std", "serde"] }
 smallvec = { version = "1.13.2", features = ["serde"] }
 embedded-hal-bus = { version = "0.2.0", features = ["std"] }
 mlx9061x = { git = "https://github.com/Radiator-Labs/mlx9061x-rs.git", version = "0.2.1" }
+mint = { version = "0.5.9", features = ["serde"] }
 
 [build-dependencies]
 embuild = "0.31.3"

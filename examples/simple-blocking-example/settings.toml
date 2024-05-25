@@ -1,3 +1,4 @@
+only_ecg = true
 [wifi]
 ssid = "1519_2.4G"
 password = "DD350963"

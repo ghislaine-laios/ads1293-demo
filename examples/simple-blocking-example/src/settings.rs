@@ -18,6 +18,7 @@ pub struct Service {
 pub struct Settings {
     pub wifi: Wifi,
     pub service: Service,
+    pub only_ecg: bool
 }
 
 impl Settings {
